@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { getAzureLoginUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +15,8 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [ssoLoading, setSsoLoading] = useState(false);
+  const [ssoError, setSsoError] = useState("");
 
   const { user, login, isLoading, isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -55,6 +58,19 @@ export default function LoginPage() {
       setError(err instanceof Error ? err.message : "Login failed. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSsoLogin = async () => {
+    setSsoError("");
+    setSsoLoading(true);
+    try {
+      const { login_url } = await getAzureLoginUrl();
+      window.location.href = login_url;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "SSO is currently unavailable";
+      setSsoError(msg);
+      setSsoLoading(false);
     }
   };
 
@@ -149,6 +165,50 @@ export default function LoginPage() {
                 )}
               </Button>
             </form>
+
+            {/* ── Microsoft SSO ────────────────────────────── */}
+            <div className="pt-2">
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-slate-700" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-slate-900 px-3 text-slate-500">or</span>
+                </div>
+              </div>
+
+              {ssoError && (
+                <Alert variant="destructive" className="mb-3 bg-red-950/50 border-red-800 text-red-400 text-sm">
+                  <AlertCircle className="h-3 w-3" />
+                  <AlertDescription className="text-xs">{ssoError}</AlertDescription>
+                </Alert>
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                disabled={ssoLoading}
+                onClick={handleSsoLogin}
+                className="w-full border-slate-700 bg-slate-800/50 text-slate-200 hover:bg-slate-700 hover:text-white h-10"
+              >
+                {ssoLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Redirecting…
+                  </>
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <svg className="h-4 w-4" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+                    </svg>
+                    Sign in with Microsoft
+                  </span>
+                )}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

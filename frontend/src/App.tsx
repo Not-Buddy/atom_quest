@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeProvider";
 
 import LoginPage from "./pages/LoginPage";
+import AzureCallbackPage from "./pages/AzureCallbackPage";
 import EmployeeDashboard from "./pages/EmployeeDashboard";
 import GoalSheetEditor from "./pages/GoalSheetEditor";
 import AchievementEntry from "./pages/AchievementEntry";
@@ -41,6 +42,7 @@ const App = () => (
             <Routes>
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/auth/azure/callback" element={<AzureCallbackPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/auth/reset-password-form" element={<ResetPasswordRedirect />} />

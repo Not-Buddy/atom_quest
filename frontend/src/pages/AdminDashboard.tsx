@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { listCycles, listDepartments, listUsers } from "@/lib/api";
+import { listCycles, listDepartments, listUsers, syncAzureOrg } from "@/lib/api";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Users,
@@ -14,6 +15,8 @@ import {
   BarChart3,
   Loader2,
   AlertCircle,
+  RefreshCw,
+  CheckCircle,
 } from "lucide-react";
 
 const quickLinks = [
@@ -76,6 +79,10 @@ export default function AdminDashboard() {
   const isLoading = cyclesLoading || deptsLoading || usersLoading;
   const isError = cyclesError || deptsError || usersError;
   const activeCycles = cycles.filter((c) => c.is_active).length;
+
+  const syncOrgMutation = useMutation({
+    mutationFn: () => syncAzureOrg(token!),
+  });
 
   return (
     <DashboardLayout>
@@ -161,6 +168,54 @@ export default function AdminDashboard() {
             </>
           )}
         </div>
+
+        {/* Azure AD Org Sync */}
+        {syncOrgMutation.isSuccess && (
+          <Alert className="bg-emerald-950/50 border-emerald-800 text-emerald-400">
+            <CheckCircle className="h-4 w-4" />
+            <AlertDescription>
+              Org sync complete — {syncOrgMutation.data.synced} user
+              {syncOrgMutation.data.synced !== 1 ? "s" : ""} synced
+              {syncOrgMutation.data.message ? ` (${syncOrgMutation.data.message})` : ""}
+            </AlertDescription>
+          </Alert>
+        )}
+        {syncOrgMutation.isError && (
+          <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-400">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {syncOrgMutation.error instanceof Error
+                ? syncOrgMutation.error.message
+                : "Org sync failed"}
+            </AlertDescription>
+          </Alert>
+        )}
+        <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
+          <CardContent className="py-3 flex items-center justify-between">
+            <div>
+              <p className="font-medium text-slate-200 text-sm">Azure AD Org Sync</p>
+              <p className="text-xs text-slate-500">
+                Sync reporting lines from Microsoft Entra ID
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={syncOrgMutation.isPending}
+              onClick={() => syncOrgMutation.mutate()}
+              className="border-slate-700 text-slate-300 hover:bg-slate-700"
+            >
+              {syncOrgMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              <span className="ml-2">
+                {syncOrgMutation.isPending ? "Syncing…" : "Sync Now"}
+              </span>
+            </Button>
+          </CardContent>
+        </Card>
 
         <div>
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Quick Links</h2>

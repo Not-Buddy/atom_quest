@@ -47,6 +47,19 @@ export async function resetPassword(token: string, newPassword: string): Promise
   return await request<{ message: string }>(`/auth/reset-password-form?token=${encodeURIComponent(token)}`, { method: "POST", body: { new_password: newPassword } });
 }
 
+// ── Azure AD / Entra ID SSO ────────────────────────────────
+export async function getAzureLoginUrl(): Promise<{ login_url: string }> {
+  return await request<{ login_url: string }>("/auth/azure/login");
+}
+export async function azureCallback(code: string, state?: string): Promise<AuthResponse> {
+  const params = new URLSearchParams({ code });
+  if (state) params.set("state", state);
+  return await request<AuthResponse>(`/auth/azure/callback?${params.toString()}`);
+}
+export async function syncAzureOrg(token: string): Promise<{ synced: number; total_azure_users: number; message?: string }> {
+  return await request<{ synced: number; total_azure_users: number; message?: string }>("/auth/azure/sync-org", { method: "PUT", token });
+}
+
 // ── Employee Endpoints ─────────────────────────────────────
 export async function createGoalSheet(token: string): Promise<GoalSheetResponse> {
   return await request<GoalSheetResponse>("/goals/sheets", { method: "POST", token });
