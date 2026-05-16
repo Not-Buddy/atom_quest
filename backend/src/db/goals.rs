@@ -2,7 +2,7 @@ use super::models::{
     AchievementReportEntry, CheckinCommentResponse, CompletionDashboardEntry, Goal, GoalResponse,
     GoalSheet, GoalSheetResponse,
 };
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 use sqlx::MySqlPool;
 
 pub async fn create_sheet(

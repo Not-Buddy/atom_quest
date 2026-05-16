@@ -32,3 +32,9 @@ regex = "1.12.2"
 # Email
 lettre = { version = "0.11.2", features = ["smtp-transport", "tokio1", "tokio1-native-tls", "builder"] }
 tokio-native-tls = "0.3.1"
+
+# Azure AD / Entra ID SSO  (OIDC discovery + token validation)
+openidconnect = { version = "3.5", features = ["reqwest"] }
+
+# Async scheduling for escalation background jobs
+tokio-cron-scheduler = "0.10"

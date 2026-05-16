@@ -7,6 +7,7 @@ use crate::{
             ReturnSheetRequest, SharedGoalPushRequest,
         },
     },
+    utils::notifications::{NotificationEvent, NotificationService},
 };
 use axum::{extract::Path, Extension, Json, extract::State};
 use chrono::NaiveDate;
@@ -77,6 +78,21 @@ pub async fn approve_sheet(
 
     goals::approve_sheet(&state.db.pool, sheet_id, claims.user_id).await?;
 
+    // 5.2 — Notify employee of approval
+    {
+        let notif = NotificationService::new(
+            Arc::new(state.config.clone()),
+            state.db.pool.clone(),
+        );
+        if let Ok(Some(emp)) = users::find_by_id(&state.db.pool, owner_id).await {
+            notif.send(NotificationEvent::GoalApproved {
+                employee_email: emp.email.clone(),
+                employee_name:  emp.full_name.clone(),
+                sheet_id,
+            }).await;
+        }
+    }
+
     Ok(Json("Sheet approved and locked"))
 }
 
@@ -112,6 +128,22 @@ pub async fn return_sheet(
     }
 
     goals::return_sheet(&state.db.pool, sheet_id, &req.reason).await?;
+
+    // 5.2 — Notify employee of return
+    {
+        let notif = NotificationService::new(
+            Arc::new(state.config.clone()),
+            state.db.pool.clone(),
+        );
+        if let Ok(Some(emp)) = users::find_by_id(&state.db.pool, owner_id).await {
+            notif.send(NotificationEvent::GoalReturned {
+                employee_email: emp.email.clone(),
+                employee_name:  emp.full_name.clone(),
+                reason:         req.reason.clone(),
+                sheet_id,
+            }).await;
+        }
+    }
 
     Ok(Json("Sheet returned to employee"))
 }

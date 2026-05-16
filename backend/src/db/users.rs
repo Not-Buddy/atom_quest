@@ -2,6 +2,123 @@ use super::models::{PasswordResetToken, User};
 use chrono::NaiveDateTime;
 use sqlx::MySqlPool;
 
+// ─── Azure AD helpers ────────────────────────────────────────────────────────
+
+/// Extended User row that includes the Azure AD columns added in migration 002.
+#[derive(Debug, sqlx::FromRow, Clone)]
+pub struct UserWithAzure {
+    pub id:            i32,
+    pub email:         String,
+    pub password_hash: String,
+    pub full_name:     String,
+    pub department_id: Option<i32>,
+    pub role:          String,
+    pub manager_id:    Option<i32>,
+    pub created_at:    Option<NaiveDateTime>,
+    pub updated_at:    Option<NaiveDateTime>,
+    pub azure_oid:     Option<String>,
+    pub azure_upn:     Option<String>,
+    pub auth_provider: Option<String>,
+}
+
+impl From<UserWithAzure> for User {
+    fn from(u: UserWithAzure) -> Self {
+        User {
+            id: u.id,
+            email: u.email,
+            password_hash: u.password_hash,
+            full_name: u.full_name,
+            department_id: u.department_id,
+            role: u.role,
+            manager_id: u.manager_id,
+            created_at: u.created_at,
+            updated_at: u.updated_at,
+        }
+    }
+}
+
+/// Upsert a user that logged in via Azure AD.
+/// Priority: (1) match by azure_oid, (2) match by email, (3) create new.
+pub async fn upsert_azure_user(
+    pool: &MySqlPool,
+    email: &str,
+    full_name: &str,
+    azure_oid: &str,
+    azure_upn: &str,
+    role: &str,
+) -> Result<User, sqlx::Error> {
+    // Try by OID first
+    if let Some(existing) = find_by_azure_oid(pool, azure_oid).await? {
+        // Update name/upn in case they changed in Azure AD
+        sqlx::query(
+            "UPDATE users SET full_name = ?, azure_upn = ?, role = ? WHERE id = ?",
+        )
+        .bind(full_name)
+        .bind(azure_upn)
+        .bind(role)
+        .bind(existing.id)
+        .execute(pool)
+        .await?;
+        return find_by_id(pool, existing.id).await.map(|u| u.unwrap());
+    }
+
+    // Try by email (existing local user linking their Azure account)
+    if let Some(existing) = find_by_email(pool, email).await? {
+        sqlx::query(
+            "UPDATE users SET azure_oid = ?, azure_upn = ?, auth_provider = 'azure_ad', full_name = ? WHERE id = ?",
+        )
+        .bind(azure_oid)
+        .bind(azure_upn)
+        .bind(full_name)
+        .bind(existing.id)
+        .execute(pool)
+        .await?;
+        return find_by_id(pool, existing.id).await.map(|u| u.unwrap());
+    }
+
+    // Create new user with a locked dummy password hash
+    let result = sqlx::query(
+        r#"INSERT INTO users (email, password_hash, full_name, role, azure_oid, azure_upn, auth_provider)
+           VALUES (?, '__azure_sso__', ?, ?, ?, ?, 'azure_ad')"#,
+    )
+    .bind(email)
+    .bind(full_name)
+    .bind(role)
+    .bind(azure_oid)
+    .bind(azure_upn)
+    .execute(pool)
+    .await?;
+
+    let id = result.last_insert_id() as i32;
+    find_by_id(pool, id).await.map(|u| u.unwrap())
+}
+
+pub async fn find_by_azure_oid(
+    pool: &MySqlPool,
+    oid: &str,
+) -> Result<Option<User>, sqlx::Error> {
+    sqlx::query_as::<_, User>(
+        "SELECT id, email, password_hash, full_name, department_id, role, manager_id, created_at, updated_at
+         FROM users WHERE azure_oid = ?",
+    )
+    .bind(oid)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Returns all users that were provisioned through Azure AD.
+pub async fn list_azure_users(pool: &MySqlPool) -> Result<Vec<UserWithAzure>, sqlx::Error> {
+    sqlx::query_as::<_, UserWithAzure>(
+        r#"SELECT id, email, password_hash, full_name, department_id, role, manager_id,
+                  created_at, updated_at, azure_oid, azure_upn, auth_provider
+           FROM users
+           WHERE auth_provider = 'azure_ad' AND azure_oid IS NOT NULL
+           ORDER BY full_name"#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn find_by_email(
     pool: &MySqlPool,
     email: &str,

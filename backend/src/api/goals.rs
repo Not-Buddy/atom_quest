@@ -7,6 +7,7 @@ use crate::{
             UpdateGoalRequest,
         },
     },
+    utils::notifications::{NotificationEvent, NotificationService},
 };
 use axum::{extract::Path, Extension, Json, extract::State};
 use chrono::NaiveDate;
@@ -110,6 +111,27 @@ pub async fn submit_sheet(
     }
 
     goals::submit_sheet(&state.db.pool, sheet_id, claims.user_id).await?;
+
+    // 5.2 — Notify manager about submission
+    {
+        let notif = NotificationService::new(
+            Arc::new(state.config.clone()),
+            state.db.pool.clone(),
+        );
+        if let Ok(Some(submitter)) = users::find_by_id(&state.db.pool, claims.user_id).await {
+            if let Some(mgr_id) = submitter.manager_id {
+                if let Ok(Some(mgr)) = users::find_by_id(&state.db.pool, mgr_id).await {
+                    notif.send(NotificationEvent::GoalSubmitted {
+                        employee_name:  submitter.full_name.clone(),
+                        employee_email: submitter.email.clone(),
+                        manager_email:  mgr.email.clone(),
+                        manager_name:   mgr.full_name.clone(),
+                        sheet_id,
+                    }).await;
+                }
+            }
+        }
+    }
 
     Ok(Json("Sheet submitted for approval"))
 }

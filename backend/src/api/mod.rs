@@ -5,6 +5,10 @@ pub mod manager;
 pub mod achievements;
 pub mod admin;
 pub mod reports;
+pub mod sso;
+pub mod analytics;
+pub mod escalation_api;
+pub mod notifications_api;
 
 use axum::{
     http::StatusCode,

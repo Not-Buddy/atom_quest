@@ -2,6 +2,7 @@ mod api;
 mod config;
 mod cors;
 mod db;
+mod escalation;
 mod logging;
 mod utils;
 
@@ -96,6 +97,13 @@ async fn main() {
         let _ = file_logger.log_with_level("INFO", "Migrations complete");
     }
 
+    // Run migration 002 (bonus features schema — idempotent)
+    if let Err(e) = run_migration_002(&db).await {
+        tracing::warn!("Migration 002 warning (may already be applied): {}", e);
+    } else {
+        tracing::info!("Migration 002 complete");
+    }
+
     // Seed demo data
     seed_demo_data(&db).await;
 
@@ -108,6 +116,14 @@ async fn main() {
         forgot_password_rate_limiter,
     });
 
+    // Start the background escalation scheduler (5.3)
+    {
+        let scheduler_state = state.clone();
+        tokio::spawn(async move {
+            escalation::start_escalation_scheduler(scheduler_state).await;
+        });
+    }
+
     let config_arc = Arc::new(config.clone());
     let logger_for_middleware = file_logger.clone();
 
@@ -117,7 +133,10 @@ async fn main() {
         .route("/auth/login", axum::routing::post(login))
         .route("/auth/forgot-password", axum::routing::post(forgot_password))
         .route("/auth/reset-password", axum::routing::post(reset_password))
-        .route("/auth/reset-password-form", axum::routing::post(reset_password_form_handler));
+        .route("/auth/reset-password-form", axum::routing::post(reset_password_form_handler))
+        // 5.1 — Azure AD SSO (callback is public; no JWT yet at this point)
+        .route("/auth/azure/login",    get(api::sso::azure_login_url))
+        .route("/auth/azure/callback", get(api::sso::azure_callback));
 
     // Protected routes - employee
     let employee_routes = Router::new()
@@ -131,6 +150,13 @@ async fn main() {
         .route("/goals/:id", axum::routing::delete(api::goals::delete_goal))
         .route("/achievements/sheet/:id", get(api::achievements::get_achievements_for_sheet))
         .route("/achievements/:goal_id/:quarter", axum::routing::put(api::achievements::update_achievement))
+        // 5.2 — Notification preferences (any authenticated user)
+        .route("/notifications/preferences", get(api::notifications_api::get_preferences))
+        .route("/notifications/preferences", axum::routing::put(api::notifications_api::update_preferences))
+        // 5.4 — Analytics (employees get filtered view)
+        .route("/analytics/qoq-trends",           get(api::analytics::qoq_trends))
+        .route("/analytics/heatmap",               get(api::analytics::org_heatmap))
+        .route("/analytics/goal-distribution",     get(api::analytics::goal_distribution))
         .layer(middleware::from_fn_with_state(
             config_arc.clone(),
             api::middleware::auth_middleware,
@@ -145,6 +171,13 @@ async fn main() {
         .route("/manager/shared-goals", axum::routing::post(api::manager::push_shared_goal))
         .route("/manager/team/checkins", get(api::manager::view_team_checkins))
         .route("/manager/checkins/:sheet_id", axum::routing::post(api::manager::add_checkin_comment))
+        // 5.4 — Manager analytics
+        .route("/analytics/manager-effectiveness", get(api::analytics::manager_effectiveness))
+        // 5.3 — Escalation log (managers + admins can view/resolve)
+        .route("/admin/escalation-log", get(api::escalation_api::list_log))
+        .route("/admin/escalation-log/:id/resolve", axum::routing::put(api::escalation_api::resolve_log_entry))
+        // 5.3 — Escalation rule listing (managers can view)
+        .route("/admin/escalation-rules", get(api::escalation_api::list_rules))
         .layer(middleware::from_fn_with_state(
             config_arc.clone(),
             api::middleware::auth_middleware,
@@ -165,6 +198,13 @@ async fn main() {
         .route("/admin/users/:id", axum::routing::delete(api::admin::delete_user))
         .route("/admin/sheets/:id/unlock", axum::routing::put(api::admin::unlock_sheet))
         .route("/admin/audit-log", get(api::admin::view_audit_log))
+        // 5.1 — Azure AD org-sync (admin only)
+        .route("/auth/azure/sync-org", axum::routing::put(api::sso::sync_org_hierarchy))
+        // 5.2 — Notification log (admin only)
+        .route("/notifications/log", get(api::notifications_api::get_notification_log))
+        // 5.3 — Escalation rule management (admin only)
+        .route("/admin/escalation-rules", axum::routing::post(api::escalation_api::create_rule))
+        .route("/admin/escalation-rules/:id", axum::routing::put(api::escalation_api::update_rule))
         .layer(middleware::from_fn_with_state(
             config_arc.clone(),
             api::middleware::auth_middleware,
@@ -252,7 +292,15 @@ async fn health_check() -> axum::Json<serde_json::Value> {
 
 async fn run_migrations(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
     let sql = include_str!("../migrations/001_core_schema.sql");
+    run_sql_script(db, sql).await
+}
 
+async fn run_migration_002(db: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    let sql = include_str!("../migrations/002_bonus_features.sql");
+    run_sql_script(db, sql).await
+}
+
+async fn run_sql_script(db: &Database, sql: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Split by semicolons and execute each statement
     for statement in sql.split(';') {
         let trimmed = statement.trim();
@@ -263,7 +311,6 @@ async fn run_migrations(db: &Database) -> Result<(), Box<dyn std::error::Error>>
             .execute(&db.pool)
             .await?;
     }
-
     Ok(())
 }
 
