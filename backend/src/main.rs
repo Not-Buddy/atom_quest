@@ -301,17 +301,27 @@ async fn run_migration_002(db: &Database) -> Result<(), Box<dyn std::error::Erro
 }
 
 async fn run_sql_script(db: &Database, sql: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Split by semicolons and execute each statement
+    // Split by semicolons and execute each statement.
+    // Individual statement failures are logged and skipped so that
+    // idempotent re-runs don't block new tables (e.g. ALTER TABLE
+    // adding an already-existing column returns a MySQL error).
+    let mut any_error = false;
     for statement in sql.split(';') {
         let trimmed = statement.trim();
         if trimmed.is_empty() || trimmed.starts_with("--") {
             continue;
         }
-        sqlx::query(trimmed)
-            .execute(&db.pool)
-            .await?;
+        if let Err(e) = sqlx::query(trimmed).execute(&db.pool).await {
+            let line = trimmed.lines().next().unwrap_or(trimmed);
+            tracing::warn!("Migration statement skipped (may already be applied): {line} — {e}");
+            any_error = true;
+        }
     }
-    Ok(())
+    if any_error {
+        Err("Some migration statements were skipped (see warnings)".into())
+    } else {
+        Ok(())
+    }
 }
 
 async fn seed_demo_data(db: &Database) {

@@ -7,11 +7,10 @@
 -- ============================================================
 
 -- Store Azure AD identity linked to a user
-ALTER TABLE `users`
-    ADD COLUMN IF NOT EXISTS `azure_oid`        VARCHAR(36)  DEFAULT NULL COMMENT 'Azure AD Object ID',
-    ADD COLUMN IF NOT EXISTS `azure_upn`        VARCHAR(255) DEFAULT NULL COMMENT 'Azure AD UPN (user principal name)',
-    ADD COLUMN IF NOT EXISTS `auth_provider`    ENUM('local','azure_ad') NOT NULL DEFAULT 'local',
-    ADD UNIQUE KEY IF NOT EXISTS `uk_azure_oid` (`azure_oid`);
+ALTER TABLE `users` ADD COLUMN `azure_oid`        VARCHAR(36)  DEFAULT NULL COMMENT 'Azure AD Object ID';
+ALTER TABLE `users` ADD COLUMN `azure_upn`        VARCHAR(255) DEFAULT NULL COMMENT 'Azure AD UPN (user principal name)';
+ALTER TABLE `users` ADD COLUMN `auth_provider`    ENUM('local','azure_ad') NOT NULL DEFAULT 'local';
+ALTER TABLE `users` ADD UNIQUE KEY `uk_azure_oid` (`azure_oid`);
 
 -- ============================================================
 -- 5.2 Notification Preferences & Log
