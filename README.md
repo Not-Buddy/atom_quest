@@ -1,5 +1,23 @@
+# AtomQuest — Goal Setting & Tracking Portal
 
-### Simple Architecture of this project
+**AtomQuest** is a full-stack web application that enables organisations to manage employee goal setting, quarterly achievement tracking, and manager check-ins. Built with a Rust backend and a React frontend, it supports role-based workflows for Employees, Managers, and Admins.
+
+### Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, TypeScript, Vite, shadcn/ui, Tailwind CSS, TanStack Query |
+| Backend | Rust 2024, Axum 0.7, SQLx 0.7, Tokio |
+| Database | MySQL 8 |
+| Auth | JWT (jsonwebtoken) + bcrypt, Azure AD / Entra ID SSO |
+| Notifications | SMTP email (lettre), Microsoft Teams Adaptive Cards |
+| Scheduling | tokio-cron-scheduler (escalation background jobs) |
+| Reports | Excel export via rust_xlsxwriter, CSV |
+
+---
+
+## Architecture
+
 ```mermaid
 %%{init: {
   'theme': 'base',
@@ -14,108 +32,204 @@
   }
 }}%%
 flowchart TB
-    %% --- STYLE DEFINITIONS ---
-    %% Frontend: Pure Black with Thick White Border
     classDef frontend fill:#000000,stroke:#ffffff,stroke-width:2px,color:#ffffff;
-
-    %% Backend: Charcoal Grey with Silver Border
-    classDef backend fill:#262626,stroke:#a3a3a3,stroke-width:2px,color:#ffffff;
-
-    %% Database: Black with Double White Border
+    classDef backend fill:#1e1b4b,stroke:#a78bfa,stroke-width:2px,color:#ffffff;
     classDef database fill:#000000,stroke:#ffffff,stroke-width:4px,color:#ffffff;
+    classDef external fill:#171717,stroke:#525252,stroke-width:2px,stroke-dasharray: 5 5,color:#d4d4d4;
+    classDef bg fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#e0f2fe;
 
-    %% External: Dark Grey with Dashed Border (to indicate external/boundary)
-    classDef external fill:#171717,stroke:#666666,stroke-width:2px,stroke-dasharray: 5 5,color:#d4d4d4;
-
-    %% Storage: Dim Grey
-    classDef storage fill:#1c1917,stroke:#525252,stroke-width:2px,color:#a8a29e;
-
-    %% --- FRONTEND ---
-    subgraph Client ["Frontend (React + TypeScript)"]
+    subgraph Client ["Frontend — React + Vite"]
         direction TB
-        F_App["App.tsx Entry"]
+        F_App["App.tsx · React Router v6"]
         
-        subgraph F_Core ["Core & State"]
+        subgraph F_Pages ["Route Pages"]
             direction LR
-            F_Ctx["Contexts & Providers<br/>(Auth, Theme, Query)"]
-            F_Hooks["Custom Hooks"]
+            F_Login["Login / SSO"]
+            F_Emp["Employee<br/>Dashboard"]
+            F_Mgr["Manager<br/>Dashboard"]
+            F_Admin["Admin<br/>Dashboard"]
         end
 
-        subgraph F_Pages ["Routing & Pages"]
-            direction TB
-            P_Public["<b>Public Routes</b><br/>Landing, Leaderboard, Login"]
-            P_Secure["<b>Protected Routes</b><br/>Student & Faculty Dashboards"]
+        subgraph F_Core ["Core Layer"]
+            F_Auth["AuthContext<br/>JWT + SSO"]
+            F_API["API Client<br/>fetch + Bearer"]
         end
 
-        subgraph F_UI ["UI Library"]
-            F_Comps["Components<br/>Header, Footer, Tables"]
-        end
-
-        %% Frontend Internal Wiring
-        F_App --> F_Core
-        F_Core --> F_Pages
-        F_Pages --> F_UI
+        F_UI["shadcn/ui Components"]
+        
+        F_App --> F_Core --> F_Pages --> F_UI
     end
 
-    %% --- BACKEND ---
-    subgraph Server ["Backend (Rust + Axum)"]
+    subgraph Server ["Backend — Rust + Axum"]
         direction TB
+        B_Main["main.rs · Axum Router"]
         
-        B_Main["Main & Config"]
-        
-        subgraph B_API ["API Layer"]
-            B_Router["<b>Axum Router</b><br/>Auth, Leaderboard, Reports, Stats"]
-            B_Middle["Middleware (CORS/Auth)"]
+        subgraph B_API ["API Modules"]
+            direction LR
+            B_Goals["Goals<br/>CRUD + Submit"]
+            B_Achieve["Achievements<br/>Quarterly Actuals"]
+            B_MgrEnd["Manager<br/>Approve / Check-in"]
+            B_Admin["Admin<br/>Cycles / Users / Audit"]
         end
 
-        subgraph B_Services ["Services & Workers"]
-            B_Bg["Background Worker<br/>(LeetCode Sync)"]
-            B_TUI["TUI Interface"]
+        subgraph B_Bonus ["Bonus Features"]
+            B_SSO["SSO<br/>Azure AD / Entra ID"]
+            B_Notif["Notifications<br/>Email + Teams"]
+            B_Escal["Escalation<br/>Rule Engine"]
+            B_Analytics["Analytics<br/>Trends / Heatmap"]
         end
 
-        B_Data["<b>Data Access Layer</b><br/>Database Wrapper + SQLx Pool"]
-
-        %% Backend Internal Wiring
-        B_Main --> B_Middle --> B_Router
-        B_Main --> B_Bg
-        B_Main --> B_TUI
-        B_Router & B_Bg --> B_Data
+        B_Data["Data Access Layer · SQLx Pool"]
+        
+        B_Main --> B_API
+        B_Main --> B_Bonus
+        B_API & B_Bonus --> B_Data
     end
 
-    %% --- INFRASTRUCTURE ---
-    subgraph Infra ["Infrastructure & External"]
-        direction LR
-        DB[("MySQL Database")]
-        
-        subgraph Ext_API ["External APIs"]
-            API_LC["LeetCode API"]
-            API_Auth["Auth Services"]
-        end
-
-        subgraph FileSys ["File System"]
-            FS_Logs["Logs, Backups,<br/>Reports, Data"]
-        end
+    subgraph Infra ["Infrastructure"]
+        DB[("MySQL<br/>8 · InnoDB")]
+        Azure["Microsoft Entra ID<br/>OAuth2 · MS Graph"]
+        Email["SMTP Server"]
+        Teams["Teams<br/>Webhooks"]
     end
 
-    %% --- CROSS-LAYER CONNECTIONS ---
-    
-    %% 1. Client to Server (The Main Bridge)
-    F_Core <==> |"HTTP/REST (JSON)"| B_Middle
+    subgraph Bg ["Background Services"]
+        B_EscalSched["Escalation Scheduler<br/>Daily @ 08:00 UTC"]
+    end
 
-    %% 2. Server to DB
-    B_Data <==> |"SQL / TCP"| DB
+    %% Connections
+    F_Core <==> |"REST / JSON"| B_Main
+    B_Data <==> |"SQL"| DB
+    B_SSO -.-> |"OIDC"| Azure
+    B_Notif -.-> |"SMTP"| Email
+    B_Notif -.-> |"Webhook"| Teams
+    B_Escal --> B_EscalSched
 
-    %% 3. Server to External
-    B_Bg -.-> |"Fetch Stats"| API_LC
-    B_Router -.-> |"Verify"| API_Auth
+    class F_App,F_Pages,F_Login,F_Emp,F_Mgr,F_Admin,F_Core,F_Auth,F_API,F_UI frontend;
+    class B_Main,B_API,B_Goals,B_Achieve,B_MgrEnd,B_Admin,B_Data backend;
+    class B_Bonus,B_SSO,B_Notif,B_Escal,B_Analytics bg;
+    class DB,AZURE database;
+    class Azure,Email,Teams external;
+    class Bg,B_EscalSched bg;
+```
 
-    %% 4. Server to Disk
-    B_TUI --> |"Read/Write"| FS_Logs
+---
 
-    %% --- CLASS ASSIGNMENT ---
-    class F_App,F_Core,F_Ctx,F_Hooks,F_Pages,P_Public,P_Secure,F_UI,F_Comps frontend;
-    class B_Main,B_API,B_Router,B_Middle,B_Services,B_Bg,B_TUI,B_Data backend;
-    class DB database;
-    class Ext_API,API_LC,API_Auth external;
-    class FileSys,FS_Logs storage;
-```mermaid
+## Project Structure
+
+```
+atom_quest/
+├── backend/                  # Rust + Axum API server
+│   ├── src/
+│   │   ├── api/              # Route handlers
+│   │   │   ├── auth.rs       # JWT login, forgot/reset password
+│   │   │   ├── sso.rs        # Azure AD / Entra ID SSO
+│   │   │   ├── goals.rs      # Goal sheet CRUD, submission
+│   │   │   ├── achievements.rs # Quarterly actual logging
+│   │   │   ├── manager.rs    # Approve/return, check-ins, shared goals
+│   │   │   ├── admin.rs      # Cycle/department/user management
+│   │   │   ├── reports.rs    # Achievement & completion reports (JSON + Excel)
+│   │   │   ├── analytics.rs  # QoQ trends, heatmap, distribution, manager effectiveness
+│   │   │   ├── notifications_api.rs # Notification preferences
+│   │   │   ├── escalation_api.rs    # Escalation rules CRUD + log
+│   │   │   └── middleware.rs # JWT auth middleware + role guards
+│   │   ├── db/               # Data access layer (SQLx)
+│   │   │   ├── models/       # Structs: User, Goal, Achievement, etc.
+│   │   │   ├── users.rs
+│   │   │   ├── goals.rs
+│   │   │   ├── achievements.rs
+│   │   │   ├── cycles.rs
+│   │   │   └── audit.rs
+│   │   ├── utils/            # Helpers (hashing, email, notifications)
+│   │   ├── escalation.rs     # Escalation rule engine + scheduler
+│   │   └── main.rs           # Entry point, router, migrations
+│   ├── migrations/           # SQL schema files
+│   └── Cargo.toml
+│
+├── frontend/                 # React + Vite SPA
+│   ├── src/
+│   │   ├── pages/            # Route-level pages
+│   │   ├── components/       # Reusable UI (shadcn/ui-based)
+│   │   ├── contexts/         # AuthContext, ThemeProvider
+│   │   ├── lib/              # API client, types, utils
+│   │   └── App.tsx           # Router + providers
+│   └── package.json
+│
+└── README.md
+```
+
+---
+
+## Feature Map
+
+### Must-Have (Phase 1–2)
+
+| Feature | Status |
+|---|---|
+| Employee goal sheet creation & submission | Done |
+| Select Thrust Area, set targets/weightage | Done |
+| Validation: total weightage = 100%, min 10% per goal, max 8 goals | Done |
+| Manager approval workflow (approve/return/edit) | Done |
+| Goal locking on approval | Done |
+| Shared goals (push departmental KPIs to multiple employees) | Done |
+| Quarterly achievement logging with UoM-based scoring | Done |
+| Status per goal: Not Started / On Track / Completed | Done |
+| Manager check-in comments per quarter | Done |
+| Achievement report (JSON + Excel export) | Done |
+| Completion dashboard by department | Done |
+| Audit trail for post-lock changes | Done |
+
+### User Roles
+
+| Role | Capabilities |
+|---|---|
+| Employee | Create/edit goals (draft only), log achievements, view locked sheets |
+| Manager (L1) | Team dashboard, approve/return sheets, edit goals inline, add check-in comments |
+| Admin | Manage cycles, departments, thrust areas, users; unlock sheets; view audit log |
+
+### Bonus Features
+
+| Feature | Description |
+|---|---|
+| Azure AD / Entra ID SSO | OAuth2 sign-in, group-based role mapping, org hierarchy sync via MS Graph |
+| Email & Teams Notifications | Submission, approval, return, and check-in reminders via SMTP + Adaptive Cards |
+| Escalation Module | Rule-based; triggers on overdue submissions, pending approvals, missing check-ins; 3-stage chain |
+| Analytics | QoQ trends, org-wide progress heatmap, goal distribution by Thrust Area/UoM, manager effectiveness |
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Rust (stable 2024 edition)
+- Node.js 18+ / Bun
+- MySQL 8
+
+### 1. Backend
+
+```bash
+cd backend
+cp .env.example .env    # configure DATABASE_URL, JWT_SECRET, SMTP, Azure vars
+cargo run
+```
+
+On first start, migrations run automatically and demo data is seeded.
+
+### 2. Frontend
+
+```bash
+cd frontend
+cp .env.example .env    # set VITE_API_URL
+npm install && npm run dev
+```
+
+### 3. Demo Users
+
+All share password: **`password123`**
+
+| Role | Email |
+|---|---|
+| Admin | `admin@demo.com` |
+| Manager | `manager@demo.com` |
+| Employee | `employee@demo.com` |
