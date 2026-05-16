@@ -1,9 +1,17 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchSheet, fetchAchievements, saveAchievements } from "@/lib/api";
-import { Quarter, QUARTERS, Achievement, AchievementStatus } from "@/lib/types";
+import { getGoalSheet, updateAchievement } from "@/lib/api";
+import type {
+  GoalResponse,
+  AchievementResponse,
+  AchievementStatus,
+  QuarterLabel,
+  Quarter,
+  AchievementUpdatePayload,
+} from "@/lib/types";
+import { QUARTER_LABELS, UOM_LABELS } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
   Save,
@@ -33,7 +42,6 @@ import {
   CheckCircle,
   Clock,
   XCircle,
-  TrendingUp,
 } from "lucide-react";
 
 const STATUS_ICONS: Record<AchievementStatus, React.ElementType> = {
@@ -48,96 +56,123 @@ const STATUS_COLORS: Record<AchievementStatus, string> = {
   completed: "text-emerald-400",
 };
 
+type EntryMap = Record<
+  number,
+  { actualValue: string; actualDate: string; status: AchievementStatus }
+>;
+
+function quarterLabelToQuarter(label: QuarterLabel): Quarter {
+  return label.toLowerCase() as Quarter;
+}
+
 export default function AchievementEntry() {
   const { sheetId } = useParams<{ sheetId: string }>();
   const { token } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [activeQuarter, setActiveQuarter] = useState<Quarter>("Q1");
-  const [entries, setEntries] = useState<Record<string, { actual: string; status: AchievementStatus }>>({});
+  const numSheetId = sheetId ? parseInt(sheetId) : 0;
+
+  const [activeTab, setActiveTab] = useState<QuarterLabel>("Q1");
+  const [entries, setEntries] = useState<EntryMap>({});
   const [saveError, setSaveError] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState("");
 
-  const { data: sheetData, isLoading: sheetLoading } = useQuery({
-    queryKey: ["sheet", sheetId],
-    queryFn: () => fetchSheet(token!, sheetId!),
-    enabled: !!token && !!sheetId,
+  const { data: sheet, isLoading, isError } = useQuery({
+    queryKey: ["sheet", numSheetId],
+    queryFn: () => getGoalSheet(token!, numSheetId),
+    enabled: !!token && !!numSheetId,
   });
 
-  const { data: achData, isLoading: achLoading } = useQuery({
-    queryKey: ["achievements", sheetId, activeQuarter],
-    queryFn: () => fetchAchievements(token!, sheetId!, activeQuarter),
-    enabled: !!token && !!sheetId,
-  });
+  const goals: GoalResponse[] = useMemo(() => sheet?.goals ?? [], [sheet?.goals]);
+  const currentQuarter = quarterLabelToQuarter(activeTab);
+
+  // Seed entries from existing achievements when quarter changes
+  const seedEntries = useCallback(() => {
+    const currentQuarterLabel = quarterLabelToQuarter(activeTab);
+    const seeded: EntryMap = {};
+    for (const goal of goals) {
+      const ach = goal.achievements.find(
+        (a) => a.quarter === currentQuarterLabel
+      );
+      seeded[goal.id] = {
+        actualValue: ach?.actual_value != null ? String(ach.actual_value) : "",
+        actualDate: ach?.actual_date ?? "",
+        status: ach?.status ?? "not_started",
+      };
+    }
+    setEntries(seeded);
+    setSaveError("");
+    setSaveSuccess("");
+  }, [goals, activeTab]);
+
+  useEffect(() => {
+    seedEntries();
+  }, [seedEntries]);
 
   const saveMutation = useMutation({
-    mutationFn: (payload: { goal_id: string; actual_value: number; status: AchievementStatus; comment?: string }[]) =>
-      saveAchievements(token!, sheetId!, activeQuarter, payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["achievements", sheetId] });
-      setSaveError("");
+    mutationFn: async () => {
+      const quarter = quarterLabelToQuarter(activeTab);
+      const promises = goals.map((goal) => {
+        const entry = entries[goal.id];
+        if (!entry) return Promise.resolve(null);
+        const payload: AchievementUpdatePayload = {
+          actual_value: entry.actualValue
+            ? Number(entry.actualValue)
+            : null,
+          actual_date: entry.actualDate || null,
+          status: entry.status,
+        };
+        return updateAchievement(token!, goal.id, quarter, payload);
+      });
+      await Promise.all(promises);
     },
-    onError: (err: Error) => setSaveError(err.message),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sheet", numSheetId] });
+      setSaveError("");
+      setSaveSuccess(`${activeTab} achievements saved`);
+      setTimeout(() => setSaveSuccess(""), 3000);
+    },
+    onError: (err: Error) => {
+      setSaveError(err.message);
+      setSaveSuccess("");
+    },
   });
 
-  const sheet = sheetData?.sheet;
-  const goals = sheet?.goals || [];
-  const achievements = achData?.achievements || [];
-
-  // Seed entries from existing achievements
-  useMemo(() => {
-    const seeded: Record<string, { actual: string; status: AchievementStatus }> = { ...entries };
-    achievements.forEach((a) => {
-      if (!seeded[a.goal_id]) {
-        seeded[a.goal_id] = { actual: String(a.actual_value), status: a.status };
-      }
-    });
-    return seeded;
-  }, [achievements]);
-
-  const handleActualChange = (goalId: string, value: string) => {
+  const updateEntry = (
+    goalId: number,
+    field: "actualValue" | "actualDate" | "status",
+    value: string
+  ) => {
     setEntries((prev) => ({
       ...prev,
-      [goalId]: { ...prev[goalId], actual: value },
+      [goalId]: {
+        ...prev[goalId],
+        [field]: field === "status" ? (value as AchievementStatus) : value,
+      },
     }));
   };
 
-  const handleStatusChange = (goalId: string, status: AchievementStatus) => {
-    setEntries((prev) => ({
-      ...prev,
-      [goalId]: { ...prev[goalId], status },
-    }));
+  // Get computed score from the achievement data for current quarter
+  const getComputedScore = (goal: GoalResponse): number | null => {
+    const ach = goal.achievements.find((a) => a.quarter === currentQuarter);
+    return ach?.computed_score ?? null;
   };
 
-  const handleSave = () => {
-    const payload = goals
-      .filter((g) => entries[g.id]?.actual)
-      .map((g) => ({
-        goal_id: g.id,
-        actual_value: Number(entries[g.id].actual),
-        status: entries[g.id].status || "not_started",
-      }));
-    if (payload.length === 0) {
-      setSaveError("Enter at least one actual value");
-      return;
+  // Count statuses for the progress bar
+  const statusCounts = {
+    not_started: 0,
+    on_track: 0,
+    completed: 0,
+  };
+  for (const goal of goals) {
+    const entry = entries[goal.id];
+    if (entry) {
+      statusCounts[entry.status]++;
     }
-    saveMutation.mutate(payload);
-  };
+  }
 
-  const computedScore = (goalId: string) => {
-    const entry = entries[goalId];
-    const existing = achievements.find((a) => a.goal_id === goalId);
-    const actual = entry?.actual ? Number(entry.actual) : existing?.actual_value || 0;
-    const goal = goals.find((g) => g.id === goalId);
-    if (!goal || !actual) return 0;
-
-    if (goal.uom_type === "min_numeric" || goal.uom_type === "zero") {
-      return Math.max(0, Math.min(100, (goal.target_value / Math.max(actual, 1)) * 100));
-    }
-    return Math.max(0, Math.min(100, (actual / goal.target_value) * 100));
-  };
-
-  if (sheetLoading) {
+  if (isLoading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
@@ -147,13 +182,17 @@ export default function AchievementEntry() {
     );
   }
 
-  if (!sheet) {
+  if (isError || !sheet) {
     return (
       <DashboardLayout>
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <AlertCircle className="h-8 w-8 text-red-400" />
           <p className="text-slate-400">Goal sheet not found</p>
-          <Button variant="outline" onClick={() => navigate("/employee")}>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/employee")}
+            className="border-slate-700 text-slate-300 hover:bg-slate-800"
+          >
             <ArrowLeft className="mr-2 h-3.5 w-3.5" />
             Back
           </Button>
@@ -174,21 +213,36 @@ export default function AchievementEntry() {
             <ArrowLeft className="h-4 w-4" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-slate-100">{sheet.cycle_name || "Goal Sheet"}</h1>
+            <h1 className="text-2xl font-bold text-slate-100">
+              {sheet.cycle_name || "Goal Sheet"}
+            </h1>
             <p className="text-sm text-slate-400">Achievement Entry</p>
           </div>
+          <StatusBadge status={sheet.status} />
         </div>
 
-        <StatusBadge status={sheet.status} />
+        {/* Success / Error alerts */}
+        {saveError && (
+          <Alert className="bg-red-950/50 border-red-800 text-red-400">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{saveError}</AlertDescription>
+          </Alert>
+        )}
+        {saveSuccess && (
+          <Alert className="bg-emerald-950/30 border-emerald-800 text-emerald-300">
+            <CheckCircle className="h-4 w-4" />
+            <AlertDescription>{saveSuccess}</AlertDescription>
+          </Alert>
+        )}
 
         {/* Quarter Tabs */}
         <Tabs
-          value={activeQuarter}
-          onValueChange={(v) => setActiveQuarter(v as Quarter)}
+          value={activeTab}
+          onValueChange={(v) => setActiveTab(v as QuarterLabel)}
           className="w-full"
         >
           <TabsList className="bg-slate-900 border border-slate-800 w-fit">
-            {QUARTERS.map((q) => (
+            {QUARTER_LABELS.map((q) => (
               <TabsTrigger
                 key={q}
                 value={q}
@@ -198,110 +252,168 @@ export default function AchievementEntry() {
               </TabsTrigger>
             ))}
           </TabsList>
+
+          <TabsContent value={activeTab}>
+            {goals.length === 0 ? (
+              <div className="text-center py-12 text-slate-500">
+                No goals in this sheet
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-800 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-800 hover:bg-transparent">
+                      <TableHead className="text-slate-400 font-medium">
+                        Goal
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium">
+                        UOM
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium text-right">
+                        Target
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium text-right">
+                        Actual
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium">
+                        Status
+                      </TableHead>
+                      <TableHead className="text-slate-400 font-medium text-right">
+                        Score
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {goals.map((goal) => {
+                      const entry = entries[goal.id] ?? {
+                        actualValue: "",
+                        actualDate: "",
+                        status: "not_started" as AchievementStatus,
+                      };
+                      const score = getComputedScore(goal);
+                      const StatusIcon = STATUS_ICONS[entry.status];
+
+                      return (
+                        <>
+                          <TableRow className="border-slate-800">
+                            <TableCell className="font-medium text-slate-200">
+                              {goal.title}
+                            </TableCell>
+                            <TableCell className="text-slate-400 text-xs uppercase">
+                              {UOM_LABELS[goal.uom_type]}
+                            </TableCell>
+                            <TableCell className="text-right text-slate-300">
+                              {goal.target_value}
+                              {goal.uom_type === "min_percent" ||
+                              goal.uom_type === "max_percent"
+                                ? "%"
+                                : ""}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {goal.uom_type === "timeline" ? (
+                                <Input
+                                  type="date"
+                                  value={entry.actualDate}
+                                  onChange={(e) =>
+                                    updateEntry(
+                                      goal.id,
+                                      "actualDate",
+                                      e.target.value
+                                    )
+                                  }
+                                  className="w-40 ml-auto bg-slate-800/50 border-slate-700 text-slate-100"
+                                />
+                              ) : (
+                                <Input
+                                  type="number"
+                                  value={entry.actualValue}
+                                  onChange={(e) =>
+                                    updateEntry(
+                                      goal.id,
+                                      "actualValue",
+                                      e.target.value
+                                    )
+                                  }
+                                  className="w-24 ml-auto bg-slate-800/50 border-slate-700 text-slate-100 text-right"
+                                  placeholder="—"
+                                />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={entry.status}
+                                onValueChange={(v) =>
+                                  updateEntry(goal.id, "status", v)
+                                }
+                              >
+                                <SelectTrigger className="w-36 bg-slate-800/50 border-slate-700 text-slate-200">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="bg-slate-900 border-slate-700 text-slate-100">
+                                  <SelectItem value="not_started">
+                                    Not Started
+                                  </SelectItem>
+                                  <SelectItem value="on_track">
+                                    On Track
+                                  </SelectItem>
+                                  <SelectItem value="completed">
+                                    Completed
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {score != null ? (
+                                <span
+                                  className={
+                                    score >= 80
+                                      ? "text-emerald-400"
+                                      : score >= 50
+                                        ? "text-amber-400"
+                                        : "text-red-400"
+                                  }
+                                >
+                                  {Math.round(score)}%
+                                </span>
+                              ) : (
+                                <span className="text-slate-600">—</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                          {/* Actual Date row for non-timeline goals with a date */}
+                          {goal.uom_type !== "timeline" &&
+                            entry.actualDate && (
+                              <TableRow className="border-slate-800">
+                                <TableCell
+                                  colSpan={3}
+                                  className="text-xs text-slate-500"
+                                >
+                                  Actual Date
+                                </TableCell>
+                                <TableCell colSpan={3} className="text-xs text-slate-400">
+                                  {entry.actualDate}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                        </>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
 
-        {/* Error */}
-        {saveError && (
-          <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-400">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{saveError}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* Table */}
-        {achLoading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
-          </div>
-        ) : goals.length === 0 ? (
-          <div className="text-center py-12 text-slate-500">No goals in this sheet</div>
-        ) : (
-          <div className="rounded-xl border border-slate-800 overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-slate-800 hover:bg-transparent">
-                  <TableHead className="text-slate-400 font-medium">Goal</TableHead>
-                  <TableHead className="text-slate-400 font-medium">UOM</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Target</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Actual</TableHead>
-                  <TableHead className="text-slate-400 font-medium">Status</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Score</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {goals.map((goal) => {
-                  const entry = entries[goal.id] || {};
-                  const existing = achievements.find((a) => a.goal_id === goal.id);
-                  const currentActual = entry.actual || existing?.actual_value?.toString() || "";
-                  const currentStatus = entry.status || existing?.status || "not_started";
-                  const score = computedScore(goal.id);
-                  const StatusIcon = STATUS_ICONS[currentStatus];
-
-                  return (
-                    <TableRow key={goal.id} className="border-slate-800">
-                      <TableCell className="font-medium text-slate-200">
-                        {goal.title}
-                      </TableCell>
-                      <TableCell className="text-slate-400 text-xs uppercase">
-                        {goal.uom_type.replace("_", " ")}
-                      </TableCell>
-                      <TableCell className="text-right text-slate-300">
-                        {goal.target_value}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input
-                          type="number"
-                          value={currentActual}
-                          onChange={(e) => handleActualChange(goal.id, e.target.value)}
-                          className="w-24 ml-auto bg-slate-800/50 border-slate-700 text-slate-100 text-right"
-                          placeholder="—"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Select
-                          value={currentStatus}
-                          onValueChange={(v) => handleStatusChange(goal.id, v as AchievementStatus)}
-                        >
-                          <SelectTrigger className="w-36 bg-slate-800/50 border-slate-700 text-slate-200">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-slate-900 border-slate-700 text-slate-100">
-                            <SelectItem value="not_started">Not Started</SelectItem>
-                            <SelectItem value="on_track">On Track</SelectItem>
-                            <SelectItem value="completed">Completed</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span
-                          className={
-                            score >= 80
-                              ? "text-emerald-400"
-                              : score >= 50
-                                ? "text-amber-400"
-                                : "text-red-400"
-                          }
-                        >
-                          {Math.round(score)}%
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-
-        {/* Progress indicator */}
+        {/* Progress indicator + Save */}
         {goals.length > 0 && (
           <div className="border-t border-slate-800 pt-4">
             <div className="flex items-center justify-between text-sm">
               <div className="flex items-center gap-4">
-                {(["not_started", "on_track", "completed"] as AchievementStatus[]).map((st) => {
-                  const count = Object.values(entries).filter(
-                    (e) => e.status === st
-                  ).length;
+                {(
+                  ["not_started", "on_track", "completed"] as AchievementStatus[]
+                ).map((st) => {
+                  const count = statusCounts[st];
                   const Icon = STATUS_ICONS[st];
                   return (
                     <div key={st} className={STATUS_COLORS[st]}>
@@ -312,7 +424,7 @@ export default function AchievementEntry() {
                 })}
               </div>
               <Button
-                onClick={handleSave}
+                onClick={() => saveMutation.mutate()}
                 disabled={saveMutation.isPending}
                 className="bg-indigo-600 hover:bg-indigo-500 text-white"
               >
@@ -324,7 +436,7 @@ export default function AchievementEntry() {
                 ) : (
                   <>
                     <Save className="mr-2 h-3.5 w-3.5" />
-                    Save {activeQuarter} Achievements
+                    Save {activeTab} Achievements
                   </>
                 )}
               </Button>
@@ -335,3 +447,4 @@ export default function AchievementEntry() {
     </DashboardLayout>
   );
 }
+

@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchAuditLogs } from "@/lib/api";
-import { AuditLogEntry } from "@/lib/types";
+import { viewAuditLog } from "@/lib/api";
+import type { AuditLogEntry } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,8 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, AlertCircle, Shield, Search, X } from "lucide-react";
 
+const LIMIT = 50;
+
 export default function AdminAuditLog() {
   const { token } = useAuth();
 
@@ -26,29 +28,28 @@ export default function AdminAuditLog() {
   const [recordFilter, setRecordFilter] = useState("");
   const [appliedTable, setAppliedTable] = useState("");
   const [appliedRecord, setAppliedRecord] = useState("");
-  const [page, setPage] = useState(1);
-  const limit = 50;
+  const [offset, setOffset] = useState(0);
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["audit-logs", appliedTable, appliedRecord, page],
+  const {
+    data: entries = [],
+    isLoading,
+    isError,
+  } = useQuery({
+    queryKey: ["audit-logs", appliedTable, appliedRecord, offset],
     queryFn: () =>
-      fetchAuditLogs(token!, {
+      viewAuditLog(token!, {
         table_name: appliedTable || undefined,
-        record_id: appliedRecord || undefined,
-        page,
-        limit,
+        record_id: appliedRecord ? Number(appliedRecord) : undefined,
+        limit: LIMIT,
+        offset,
       }),
     enabled: !!token,
   });
 
-  const entries: AuditLogEntry[] = data?.data || [];
-  const total = data?.total || 0;
-  const totalPages = Math.ceil(total / limit);
-
   const applyFilters = () => {
     setAppliedTable(tableFilter.trim());
     setAppliedRecord(recordFilter.trim());
-    setPage(1);
+    setOffset(0);
   };
 
   const clearFilters = () => {
@@ -56,10 +57,11 @@ export default function AdminAuditLog() {
     setRecordFilter("");
     setAppliedTable("");
     setAppliedRecord("");
-    setPage(1);
+    setOffset(0);
   };
 
   const hasFilters = appliedTable || appliedRecord;
+  const hasMore = entries.length === LIMIT;
 
   return (
     <DashboardLayout>
@@ -69,7 +71,6 @@ export default function AdminAuditLog() {
           <p className="text-sm text-slate-400 mt-1">Track all system changes</p>
         </div>
 
-        {/* Filters */}
         <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
           <CardContent className="py-4">
             <div className="flex items-end gap-3 flex-wrap">
@@ -83,12 +84,13 @@ export default function AdminAuditLog() {
                   onKeyDown={(e) => e.key === "Enter" && applyFilters()}
                 />
               </div>
-              <div className="space-y-1.5 flex-1 min-w-[180px]">
+              <div className="space-y-1.5 flex-1 min-w-[140px]">
                 <Label className="text-xs text-slate-400">Record ID</Label>
                 <Input
+                  type="number"
                   value={recordFilter}
                   onChange={(e) => setRecordFilter(e.target.value)}
-                  placeholder="e.g., sheet_abc123"
+                  placeholder="e.g., 42"
                   className="bg-slate-800/50 border-slate-700 text-slate-100 text-sm placeholder:text-slate-600"
                   onKeyDown={(e) => e.key === "Enter" && applyFilters()}
                 />
@@ -118,7 +120,6 @@ export default function AdminAuditLog() {
           </CardContent>
         </Card>
 
-        {/* Table */}
         {isLoading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
@@ -144,7 +145,7 @@ export default function AdminAuditLog() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-slate-800 hover:bg-transparent">
-                    <TableHead className="text-slate-400 whitespace-nowrap">Timestamp</TableHead>
+                    <TableHead className="text-slate-400 whitespace-nowrap">Changed At</TableHead>
                     <TableHead className="text-slate-400 whitespace-nowrap">Table</TableHead>
                     <TableHead className="text-slate-400 whitespace-nowrap">Record ID</TableHead>
                     <TableHead className="text-slate-400 whitespace-nowrap">Field</TableHead>
@@ -157,16 +158,16 @@ export default function AdminAuditLog() {
                   {entries.map((entry) => (
                     <TableRow key={entry.id} className="border-slate-800">
                       <TableCell className="text-slate-400 text-xs whitespace-nowrap">
-                        {new Date(entry.timestamp).toLocaleString()}
+                        {entry.changed_at ? new Date(entry.changed_at).toLocaleString() : "—"}
                       </TableCell>
                       <TableCell className="text-slate-300 text-xs font-mono">
                         {entry.table_name}
                       </TableCell>
-                      <TableCell className="text-slate-400 text-xs font-mono max-w-[120px] truncate">
+                      <TableCell className="text-slate-400 text-xs font-mono">
                         {entry.record_id}
                       </TableCell>
                       <TableCell className="text-slate-300 text-xs">
-                        {entry.field}
+                        {entry.field_name ?? "—"}
                       </TableCell>
                       <TableCell className="text-slate-500 text-xs max-w-[150px] truncate">
                         {entry.old_value ?? "—"}
@@ -175,7 +176,7 @@ export default function AdminAuditLog() {
                         {entry.new_value ?? "—"}
                       </TableCell>
                       <TableCell className="text-slate-400 text-xs">
-                        {entry.changed_by}
+                        {entry.changed_by ?? "—"}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -183,34 +184,32 @@ export default function AdminAuditLog() {
               </Table>
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between pt-2">
-                <p className="text-xs text-slate-500">
-                  Showing {(page - 1) * limit + 1}–{Math.min(page * limit, total)} of {total}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
-                    className="border-slate-700 text-slate-300"
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => p + 1)}
-                    className="border-slate-700 text-slate-300"
-                  >
-                    Next
-                  </Button>
-                </div>
+            <div className="flex items-center justify-between pt-2">
+              <p className="text-xs text-slate-500">
+                Showing {entries.length} result{entries.length !== 1 ? "s" : ""}
+                {offset > 0 && ` (offset ${offset})`}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={offset === 0}
+                  onClick={() => setOffset((p) => Math.max(0, p - LIMIT))}
+                  className="border-slate-700 text-slate-300"
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!hasMore}
+                  onClick={() => setOffset((p) => p + LIMIT)}
+                  className="border-slate-700 text-slate-300"
+                >
+                  Next
+                </Button>
               </div>
-            )}
+            </div>
           </>
         )}
       </div>

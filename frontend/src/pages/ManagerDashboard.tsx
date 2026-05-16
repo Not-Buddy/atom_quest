@@ -1,46 +1,61 @@
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchManagerStats, fetchTeamMembers } from "@/lib/api";
-import { GoalSheet } from "@/lib/types";
+import { listTeamSheets } from "@/lib/api";
+import type { GoalSheetSummary } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, FileText, Clock, Loader2, ArrowRight, AlertCircle } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Users, FileText, Clock, Loader2, AlertCircle, ArrowRight, Eye, MessageSquare } from "lucide-react";
 
 export default function ManagerDashboard() {
   const { user, token } = useAuth();
   const navigate = useNavigate();
 
-  const { data: statsData, isLoading: statsLoading } = useQuery({
-    queryKey: ["manager-stats"],
-    queryFn: () => fetchManagerStats(token!),
+  const { data: sheets = [], isLoading, error } = useQuery<GoalSheetSummary[]>({
+    queryKey: ["team-sheets"],
+    queryFn: () => listTeamSheets(token!),
     enabled: !!token,
   });
 
-  const { data: teamData, isLoading: teamLoading } = useQuery({
-    queryKey: ["team-members"],
-    queryFn: () => fetchTeamMembers(token!),
-    enabled: !!token,
-  });
+  const uniqueUserIds = [...new Set(sheets.map((s) => s.user_id))];
+  const totalTeamMembers = uniqueUserIds.length;
+  const pendingCount = sheets.filter((s) => s.status === "submitted").length;
 
-  const stats = statsData?.stats;
-  const members: GoalSheet[] = teamData?.members || [];
+  const stats = [
+    {
+      label: "Total Members",
+      value: totalTeamMembers,
+      icon: Users,
+      color: "bg-indigo-600/20 text-indigo-400",
+    },
+    {
+      label: "Pending Approvals",
+      value: pendingCount,
+      icon: Clock,
+      color: "bg-amber-500/20 text-amber-400",
+    },
+    {
+      label: "Submitted",
+      value: pendingCount,
+      icon: FileText,
+      color: "bg-emerald-500/20 text-emerald-400",
+    },
+  ];
 
   return (
     <DashboardLayout>
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">
-            Manager Dashboard
-          </h1>
+          <h1 className="text-2xl font-bold text-slate-100">Manager Dashboard</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Welcome, {user?.name || "Manager"}
+            Welcome, {user?.full_name || "Manager"}
           </p>
         </div>
 
         {/* Stats Cards */}
-        {statsLoading ? (
+        {isLoading ? (
           <div className="grid gap-4 sm:grid-cols-3">
             {[1, 2, 3].map((i) => (
               <Card key={i} className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
@@ -53,55 +68,41 @@ export default function ManagerDashboard() {
               </Card>
             ))}
           </div>
-        ) : stats ? (
+        ) : error ? (
+          <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
+            <CardContent className="py-6 text-center">
+              <AlertCircle className="h-5 w-5 text-red-400 mx-auto mb-2" />
+              <p className="text-red-400 text-sm">Failed to load team data</p>
+            </CardContent>
+          </Card>
+        ) : (
           <div className="grid gap-4 sm:grid-cols-3">
-            <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600/20">
-                    <Users className="h-5 w-5 text-indigo-400" />
+            {stats.map((s) => (
+              <Card
+                key={s.label}
+                className="bg-slate-900/80 backdrop-blur-sm border border-slate-800"
+              >
+                <CardContent className="py-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${s.color}`}>
+                      <s.icon className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-slate-100">{s.value}</p>
+                      <p className="text-sm text-slate-400">{s.label}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-2xl font-bold text-slate-100">{stats.total_team_members}</p>
-                    <p className="text-sm text-slate-400">Team Members</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/20">
-                    <Clock className="h-5 w-5 text-amber-400" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-slate-100">{stats.pending_approvals}</p>
-                    <p className="text-sm text-slate-400">Pending Approvals</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/20">
-                    <FileText className="h-5 w-5 text-emerald-400" />
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-slate-100">{stats.submitted_sheets}</p>
-                    <p className="text-sm text-slate-400">Submitted</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        ) : null}
+        )}
 
-        {/* Team Members */}
+        {/* Team Goal Sheets */}
         <div>
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Team Goal Sheets</h2>
 
-          {teamLoading ? (
+          {isLoading ? (
             <div className="grid gap-3 sm:grid-cols-2">
               {[1, 2, 3].map((i) => (
                 <Card key={i} className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
@@ -114,7 +115,7 @@ export default function ManagerDashboard() {
                 </Card>
               ))}
             </div>
-          ) : members.length === 0 ? (
+          ) : error ? null : sheets.length === 0 ? (
             <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
               <CardContent className="py-8 text-center">
                 <Users className="h-8 w-8 text-slate-600 mx-auto mb-3" />
@@ -123,27 +124,54 @@ export default function ManagerDashboard() {
             </Card>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {members.map((m) => (
+              {sheets.map((sheet: GoalSheetSummary) => (
                 <Card
-                  key={m.id}
-                  className="bg-slate-900/80 backdrop-blur-sm border border-slate-800 hover:border-slate-700 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/manager/review/${m.id}`)}
+                  key={sheet.id}
+                  className="bg-slate-900/80 backdrop-blur-sm border border-slate-800 hover:border-slate-700 transition-colors"
                 >
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="font-medium text-slate-200 truncate">
-                          {m.user_name || "Team Member"}
+                          {sheet.user_name || "Team Member"}
                         </p>
-                        <p className="text-xs text-slate-500 mt-0.5">{m.user_department}</p>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          {m.cycle_name} &middot; {m.goals?.length || 0} goals
+                          {sheet.cycle_name || "Unknown Cycle"}
                         </p>
+                        <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
+                          <span>{sheet.goal_count} goals</span>
+                          <span>Weightage: {sheet.total_weightage}%</span>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <StatusBadge status={m.status} />
-                        <ArrowRight className="h-4 w-4 text-slate-600" />
+                        <StatusBadge status={sheet.status} />
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-800/50">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-slate-700 text-slate-300 hover:bg-slate-800/50 text-xs h-8"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/manager/review/${sheet.id}`);
+                        }}
+                      >
+                        <Eye className="mr-1.5 h-3 w-3" />
+                        Review
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-slate-700 text-slate-300 hover:bg-slate-800/50 text-xs h-8"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/manager/checkin/${sheet.id}`);
+                        }}
+                      >
+                        <MessageSquare className="mr-1.5 h-3 w-3" />
+                        Check-in
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>

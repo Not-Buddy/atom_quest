@@ -14,10 +14,8 @@ pub fn create_cors_layer() -> CorsLayer {
     } else {
         CorsLayer::new()
             .allow_origin([
-                "https://innosolve.in".parse::<HeaderValue>().unwrap(),
-                "http://innosolve.in".parse::<HeaderValue>().unwrap(),
-                "https://a350.innosolve.in".parse::<HeaderValue>().unwrap(),
-                "http://a350.innosolve.in".parse::<HeaderValue>().unwrap(),
+                "https://atom-quest-seven.vercel.app".parse::<HeaderValue>().unwrap(),
+                "http://atom-quest-seven.vercel.app".parse::<HeaderValue>().unwrap(),
             ])
             .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
             .allow_headers([

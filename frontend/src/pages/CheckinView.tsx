@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchSheet, fetchCheckin, saveCheckin } from "@/lib/api";
-import { Quarter, QUARTERS, AchievementStatus } from "@/lib/types";
+import { getGoalSheet, addCheckinComment } from "@/lib/api";
+import type { GoalSheetResponse, GoalResponse, AchievementResponse, CheckinCommentResponse, Quarter, QuarterLabel } from "@/lib/types";
+import { QUARTER_LABELS, UOM_LABELS, UOM_COLORS } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -18,24 +18,55 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowLeft,
-  Save,
+  Send,
   Loader2,
   AlertCircle,
+  MessageSquare,
+  CheckCircle2,
+  Clock,
+  Circle,
 } from "lucide-react";
 
-const SCORE_COLORS = (score: number) =>
-  score >= 80 ? "text-emerald-400" : score >= 50 ? "text-amber-400" : "text-red-400";
+const QUARTER_TO_LOWER: Record<QuarterLabel, Quarter> = {
+  Q1: "q1",
+  Q2: "q2",
+  Q3: "q3",
+  Q4: "q4",
+};
+
+const ACHIEVEMENT_STATUS_ICONS: Record<string, React.ElementType> = {
+  completed: CheckCircle2,
+  on_track: Clock,
+  not_started: Circle,
+};
+
+const ACHIEVEMENT_STATUS_COLORS: Record<string, string> = {
+  completed: "text-emerald-400",
+  on_track: "text-amber-400",
+  not_started: "text-slate-500",
+};
+
+function scoreColor(score: number | null): string {
+  if (score === null) return "text-slate-500";
+  if (score >= 80) return "text-emerald-400";
+  if (score >= 50) return "text-amber-400";
+  return "text-red-400";
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  try {
+    return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return "—";
+  }
+}
 
 export default function CheckinView() {
   const { sheetId } = useParams<{ sheetId: string }>();
@@ -43,82 +74,41 @@ export default function CheckinView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const [activeQuarter, setActiveQuarter] = useState<Quarter>("Q1");
-  const [comments, setComments] = useState<Record<string, string>>({});
+  const numericId = Number(sheetId);
+
+  const [activeQuarter, setActiveQuarter] = useState<QuarterLabel>("Q1");
+  const [commentText, setCommentText] = useState("");
   const [error, setError] = useState("");
 
-  const { data: sheetData, isLoading: sheetLoading } = useQuery({
-    queryKey: ["sheet", sheetId],
-    queryFn: () => fetchSheet(token!, sheetId!),
-    enabled: !!token && !!sheetId,
+  const { data: sheet, isLoading } = useQuery<GoalSheetResponse>({
+    queryKey: ["sheet", numericId],
+    queryFn: () => getGoalSheet(token!, numericId),
+    enabled: !!token && !Number.isNaN(numericId),
   });
 
-  const { data: checkinData, isLoading: checkinLoading } = useQuery({
-    queryKey: ["checkin", sheetId],
-    queryFn: () => fetchCheckin(token!, sheetId!),
-    enabled: !!token && !!sheetId,
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: (entries: {
-      goal_id: string;
-      q1_actual: number;
-      q2_actual: number;
-      q3_actual: number;
-      q4_actual: number;
-      q1_status: AchievementStatus;
-      q2_status: AchievementStatus;
-      q3_status: AchievementStatus;
-      q4_status: AchievementStatus;
-      q1_score: number;
-      q2_score: number;
-      q3_score: number;
-      q4_score: number;
-      comment?: string;
-    }[]) => saveCheckin(token!, sheetId!, entries),
+  const saveCommentMutation = useMutation({
+    mutationFn: () =>
+      addCheckinComment(token!, numericId, {
+        quarter: activeQuarter,
+        comment: commentText,
+      }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["checkin", sheetId] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numericId] });
+      setCommentText("");
       setError("");
     },
     onError: (err: Error) => setError(err.message),
   });
 
-  const sheet = sheetData?.sheet;
   const goals = sheet?.goals || [];
-  const checkinEntries = checkinData?.checkin || [];
+  const checkins = sheet?.checkins || [];
+  const activeQuarterLower = QUARTER_TO_LOWER[activeQuarter];
 
-  const handleSave = () => {
-    const entries = goals.map((g) => {
-      const existing = checkinEntries.find((c) => c.goal_id === g.id) || {};
-      return {
-        goal_id: g.id,
-        q1_actual: Number((document.getElementById(`q1_${g.id}`) as HTMLInputElement)?.value) || existing.q1_actual || 0,
-        q2_actual: Number((document.getElementById(`q2_${g.id}`) as HTMLInputElement)?.value) || existing.q2_actual || 0,
-        q3_actual: Number((document.getElementById(`q3_${g.id}`) as HTMLInputElement)?.value) || existing.q3_actual || 0,
-        q4_actual: Number((document.getElementById(`q4_${g.id}`) as HTMLInputElement)?.value) || existing.q4_actual || 0,
-        q1_status: "not_started" as AchievementStatus,
-        q2_status: "not_started" as AchievementStatus,
-        q3_status: "not_started" as AchievementStatus,
-        q4_status: "not_started" as AchievementStatus,
-        q1_score: computeScore(g, Number((document.getElementById(`q1_${g.id}`) as HTMLInputElement)?.value) || 0),
-        q2_score: computeScore(g, Number((document.getElementById(`q2_${g.id}`) as HTMLInputElement)?.value) || 0),
-        q3_score: computeScore(g, Number((document.getElementById(`q3_${g.id}`) as HTMLInputElement)?.value) || 0),
-        q4_score: computeScore(g, Number((document.getElementById(`q4_${g.id}`) as HTMLInputElement)?.value) || 0),
-        comment: comments[g.id] || existing.comment || "",
-      };
-    });
-    saveMutation.mutate(entries);
-  };
+  const filteredCheckins = checkins.filter(
+    (c: CheckinCommentResponse) => c.quarter === activeQuarterLower
+  );
 
-  const computeScore = (goal: typeof goals[0], actual: number) => {
-    if (!actual || !goal.target_value) return 0;
-    if (goal.uom_type === "min_numeric" || goal.uom_type === "zero") {
-      return Math.round(Math.max(0, Math.min(100, (goal.target_value / Math.max(actual, 1)) * 100)));
-    }
-    return Math.round(Math.max(0, Math.min(100, (actual / goal.target_value) * 100)));
-  };
-
-  if (sheetLoading) {
+  if (isLoading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center py-20">
@@ -134,7 +124,7 @@ export default function CheckinView() {
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <AlertCircle className="h-8 w-8 text-red-400" />
           <p className="text-slate-400">Goal sheet not found</p>
-          <Button variant="outline" onClick={() => navigate("/manager")}>
+          <Button variant="outline" className="border-slate-700" onClick={() => navigate("/manager")}>
             <ArrowLeft className="mr-2 h-3.5 w-3.5" />
             Back
           </Button>
@@ -160,8 +150,8 @@ export default function CheckinView() {
               <h1 className="text-2xl font-bold text-slate-100">
                 Check-in &mdash; {sheet.user_name || "Employee"}
               </h1>
-              <p className="text-sm text-slate-400">
-                {sheet.cycle_name} &middot; {sheet.user_department}
+              <p className="text-sm text-slate-400 mt-1">
+                {sheet.cycle_name || "Unknown Cycle"}
               </p>
             </div>
             <StatusBadge status={sheet.status} className="px-3 py-1 text-sm" />
@@ -176,9 +166,9 @@ export default function CheckinView() {
         )}
 
         {/* Quarter Tabs */}
-        <Tabs value={activeQuarter} onValueChange={(v) => setActiveQuarter(v as Quarter)}>
+        <Tabs value={activeQuarter} onValueChange={(v) => setActiveQuarter(v as QuarterLabel)}>
           <TabsList className="bg-slate-900 border border-slate-800">
-            {QUARTERS.map((q) => (
+            {QUARTER_LABELS.map((q) => (
               <TabsTrigger
                 key={q}
                 value={q}
@@ -190,113 +180,152 @@ export default function CheckinView() {
           </TabsList>
         </Tabs>
 
-        {/* Checkin Table */}
-        {checkinLoading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
-          </div>
-        ) : goals.length === 0 ? (
-          <div className="text-center py-12 text-slate-500">No goals in this sheet</div>
-        ) : (
-          <div className="rounded-xl border border-slate-800 overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-slate-800 hover:bg-transparent">
-                  <TableHead className="text-slate-400 font-medium">Goal</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Target</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q1 Actual</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q2 Actual</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q3 Actual</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q4 Actual</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q1 Score</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q2 Score</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q3 Score</TableHead>
-                  <TableHead className="text-slate-400 font-medium text-right">Q4 Score</TableHead>
+        {/* Achievement Table */}
+        <div className="rounded-xl border border-slate-800 overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-slate-800 hover:bg-transparent">
+                <TableHead className="text-slate-400 font-medium">Goal Title</TableHead>
+                <TableHead className="text-slate-400 font-medium">UoM</TableHead>
+                <TableHead className="text-slate-400 font-medium text-right">Target</TableHead>
+                <TableHead className="text-slate-400 font-medium text-right">Actual Value</TableHead>
+                <TableHead className="text-slate-400 font-medium">Date</TableHead>
+                <TableHead className="text-slate-400 font-medium">Status</TableHead>
+                <TableHead className="text-slate-400 font-medium text-right">Score</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {goals.length === 0 ? (
+                <TableRow className="border-slate-800">
+                  <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                    No goals in this sheet
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {goals.map((goal) => {
-                  const existing = checkinEntries.find((c) => c.goal_id === goal.id) || ({} as any);
+              ) : (
+                goals.map((goal: GoalResponse) => {
+                  const achievement = goal.achievements.find(
+                    (a: AchievementResponse) => a.quarter === activeQuarterLower
+                  );
+
+                  const StatusIcon = achievement
+                    ? ACHIEVEMENT_STATUS_ICONS[achievement.status] || Circle
+                    : Circle;
+
+                  const statusColor = achievement
+                    ? ACHIEVEMENT_STATUS_COLORS[achievement.status] || "text-slate-500"
+                    : "text-slate-500";
+
                   return (
                     <TableRow key={goal.id} className="border-slate-800">
                       <TableCell className="font-medium text-slate-200 max-w-[200px] truncate">
                         {goal.title}
                       </TableCell>
-                      <TableCell className="text-right text-slate-300">{goal.target_value}</TableCell>
-                      {(["q1", "q2", "q3", "q4"] as const).map((q) => (
-                        <TableCell key={q} className="text-right">
-                          <Input
-                            id={`${q}_${goal.id}`}
-                            type="number"
-                            defaultValue={existing[`${q}_actual`] || ""}
-                            className="w-20 ml-auto bg-slate-800/50 border-slate-700 text-slate-100 text-right"
-                            placeholder="—"
-                          />
-                        </TableCell>
-                      ))}
-                      {(["q1", "q2", "q3", "q4"] as const).map((q) => (
-                        <TableCell key={`score_${q}`} className="text-right">
-                          <span className={SCORE_COLORS(existing[`${q}_score`] || 0)}>
-                            {existing[`${q}_score`] || 0}%
+                      <TableCell>
+                        {goal.uom_type ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] px-1.5 py-0 border ${UOM_COLORS[goal.uom_type]}`}
+                          >
+                            {UOM_LABELS[goal.uom_type] || goal.uom_type}
+                          </Badge>
+                        ) : (
+                          <span className="text-slate-500 text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right text-slate-300">
+                        {goal.target_value}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className={achievement?.actual_value != null ? "text-slate-200 font-medium" : "text-slate-600"}>
+                          {achievement?.actual_value ?? "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-slate-400 text-xs">
+                        {formatDate(achievement?.actual_date ?? null)}
+                      </TableCell>
+                      <TableCell>
+                        <div className={`flex items-center gap-1.5 ${statusColor}`}>
+                          <StatusIcon className="h-3.5 w-3.5" />
+                          <span className="text-xs capitalize">
+                            {achievement?.status?.replace("_", " ") || "not started"}
                           </span>
-                        </TableCell>
-                      ))}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className={`font-semibold ${scoreColor(achievement?.computed_score ?? null)}`}>
+                          {achievement?.computed_score != null ? `${achievement.computed_score}%` : "—"}
+                        </span>
+                      </TableCell>
                     </TableRow>
                   );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
 
-        {/* Comments section */}
-        {goals.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium text-slate-400">Check-in Comments</h3>
-            {goals.map((goal) => {
-              const existing = checkinEntries.find((c) => c.goal_id === goal.id);
-              return (
-                <Card key={goal.id} className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
+        {/* Check-in Comments Section */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-slate-400" />
+            <h3 className="text-sm font-semibold text-slate-300">Check-in Comments for {activeQuarter}</h3>
+          </div>
+
+          {/* Existing comments */}
+          {filteredCheckins.length > 0 ? (
+            <div className="space-y-2">
+              {filteredCheckins.map((c: CheckinCommentResponse) => (
+                <Card key={c.id} className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
                   <CardContent className="py-3">
-                    <p className="text-sm font-medium text-slate-300 mb-2">{goal.title}</p>
-                    <Textarea
-                      defaultValue={existing?.comment || ""}
-                      onChange={(e) =>
-                        setComments((prev) => ({ ...prev, [goal.id]: e.target.value }))
-                      }
-                      placeholder="Add comment..."
-                      className="bg-slate-800/50 border-slate-700 text-slate-100 placeholder:text-slate-600"
-                      rows={2}
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-indigo-400">
+                        {c.manager_name || "Manager"}
+                      </span>
+                      <span className="text-[10px] text-slate-600">
+                        {c.created_at ? new Date(c.created_at).toLocaleString() : ""}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-300">{c.comment}</p>
                   </CardContent>
                 </Card>
-              );
-            })}
-          </div>
-        )}
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-600">No comments yet for {activeQuarter}</p>
+          )}
 
-        {/* Save */}
-        {goals.length > 0 && (
-          <div className="border-t border-slate-800 pt-4">
-            <Button
-              onClick={handleSave}
-              disabled={saveMutation.isPending}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white"
-            >
-              {saveMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="mr-2 h-3.5 w-3.5" />
-                  Save Check-in
-                </>
-              )}
-            </Button>
-          </div>
-        )}
+          {/* Add comment form */}
+          <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
+            <CardContent className="py-4 space-y-3">
+              <Textarea
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                placeholder={`Add a check-in comment for ${activeQuarter}...`}
+                className="bg-slate-800/50 border-slate-700 text-slate-100 placeholder:text-slate-600"
+                rows={3}
+              />
+              <div className="flex justify-end">
+                <Button
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                  onClick={() => saveCommentMutation.mutate()}
+                  disabled={saveCommentMutation.isPending || !commentText.trim()}
+                >
+                  {saveCommentMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="mr-2 h-3.5 w-3.5" />
+                      Save Comment
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </DashboardLayout>
   );

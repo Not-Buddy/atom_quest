@@ -1,44 +1,56 @@
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchMySheets, fetchActiveCycle, createSheet } from "@/lib/api";
-import { GoalSheet } from "@/lib/types";
+import { listGoalSheets, listCycles, createGoalSheet } from "@/lib/api";
+import type { GoalSheetSummary } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Plus, Target, FileText, AlertCircle, Loader2, Calendar } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Plus, Target, AlertCircle, Loader2, Calendar } from "lucide-react";
 
 export default function EmployeeDashboard() {
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: sheetsData, isLoading: sheetsLoading, error: sheetsError } = useQuery({
+  const {
+    data: sheets = [],
+    isLoading: sheetsLoading,
+    error: sheetsError,
+  } = useQuery({
     queryKey: ["my-sheets"],
-    queryFn: () => fetchMySheets(token!),
+    queryFn: () => listGoalSheets(token!),
     enabled: !!token,
   });
 
-  const { data: cycleData, isLoading: cycleLoading } = useQuery({
-    queryKey: ["active-cycle"],
-    queryFn: () => fetchActiveCycle(token!),
+  const { data: cycles, isLoading: cycleLoading } = useQuery({
+    queryKey: ["cycles"],
+    queryFn: () => listCycles(token!),
     enabled: !!token,
   });
+
+  const activeCycle = cycles?.find((c) => c.is_active) ?? null;
+
+  // Check if employee already has a sheet for the active cycle
+  const existingSheet = activeCycle ? sheets.find((s) => s.cycle_id === activeCycle.id) : null;
 
   const createSheetMutation = useMutation({
-    mutationFn: async () => {
-      if (!cycleData?.cycle?.id) throw new Error("No active cycle");
-      return createSheet(token!, cycleData.cycle.id);
-    },
+    mutationFn: () => createGoalSheet(token!),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["my-sheets"] });
-      navigate(`/employee/goals/${data.sheet.id}`);
+      navigate(`/employee/goals/${data.id}`);
     },
   });
 
-  const sheets: GoalSheet[] = sheetsData?.sheets || [];
-  const activeCycle = cycleData?.cycle;
+  const handleCreateOrOpen = () => {
+    if (existingSheet) {
+      navigate(`/employee/goals/${existingSheet.id}`);
+    } else {
+      createSheetMutation.mutate();
+    }
+  };
 
   return (
     <DashboardLayout>
@@ -46,7 +58,7 @@ export default function EmployeeDashboard() {
         {/* Welcome */}
         <div>
           <h1 className="text-2xl font-bold text-slate-100">
-            Welcome, {user?.name || "Employee"}
+            Welcome, {user?.full_name || "Employee"}
           </h1>
           <p className="text-slate-400 text-sm mt-1">
             Manage your goal sheets and track achievements
@@ -71,54 +83,49 @@ export default function EmployeeDashboard() {
                   <div>
                     <p className="text-sm text-slate-400">Active Cycle</p>
                     <p className="text-lg font-semibold text-slate-100">{activeCycle.name}</p>
-                    {activeCycle.end_date && (
-                      <p className="text-xs text-slate-500">
-                        Ends: {new Date(activeCycle.end_date).toLocaleDateString()}
-                      </p>
-                    )}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white"
+                  onClick={handleCreateOrOpen}
+                  disabled={createSheetMutation.isPending}
+                >
+                  {createSheetMutation.isPending ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : existingSheet ? (
+                    <Target className="mr-2 h-3.5 w-3.5" />
+                  ) : (
+                    <Plus className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  {existingSheet ? "Open Goal Sheet" : "Create Goal Sheet"}
+                </Button>
+                {createSheetMutation.isError && (
                   <Button
+                    variant="ghost"
                     size="sm"
-                    variant="outline"
-                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                    onClick={() => navigate("/employee/goals")}
+                    className="text-red-400 text-xs"
+                    disabled
                   >
-                    <FileText className="mr-2 h-3.5 w-3.5" />
-                    View My Goals
+                    {(createSheetMutation.error as Error)?.message || "Creation failed"}
                   </Button>
-                  <Button
-                    size="sm"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white"
-                    onClick={() => createSheetMutation.mutate()}
-                    disabled={createSheetMutation.isPending}
-                  >
-                    {createSheetMutation.isPending ? (
-                      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Plus className="mr-2 h-3.5 w-3.5" />
-                    )}
-                    Create Goal Sheet
-                  </Button>
-                </div>
+                )}
               </div>
             </CardContent>
           </Card>
         ) : (
           <Card className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
             <CardContent className="py-8 text-center">
-              <div className="flex justify-center mb-3">
-                <AlertCircle className="h-8 w-8 text-slate-600" />
-              </div>
-              <p className="text-slate-400">No active goal cycle at this time</p>
-              <p className="text-slate-600 text-sm mt-1">
-                Check back when a new cycle begins
-              </p>
-            </CardContent>
+                <div className="flex justify-center mb-3">
+                  <AlertCircle className="h-8 w-8 text-slate-600" />
+                </div>
+                <p className="text-slate-400">No active goal cycle at this time</p>
+                <p className="text-slate-600 text-sm mt-1">
+                  Check back when a new cycle begins
+                </p>
+              </CardContent>
           </Card>
         )}
-
         {/* Goal Sheets List */}
         <div>
           <h2 className="text-lg font-semibold text-slate-200 mb-4">My Goal Sheets</h2>
@@ -127,11 +134,10 @@ export default function EmployeeDashboard() {
             <div className="grid gap-3 sm:grid-cols-2">
               {[1, 2, 3].map((i) => (
                 <Card key={i} className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
-                  <CardContent className="py-8">
-                    <div className="animate-pulse space-y-3">
-                      <div className="h-4 w-3/4 rounded bg-slate-800" />
-                      <div className="h-3 w-1/2 rounded bg-slate-800" />
-                    </div>
+                  <CardContent className="py-6 space-y-3">
+                    <Skeleton className="h-4 w-3/4 bg-slate-800" />
+                    <Skeleton className="h-3 w-1/2 bg-slate-800" />
+                    <Skeleton className="h-3 w-1/3 bg-slate-800" />
                   </CardContent>
                 </Card>
               ))}
@@ -156,7 +162,7 @@ export default function EmployeeDashboard() {
             </Card>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {sheets.map((sheet) => (
+              {sheets.map((sheet: GoalSheetSummary) => (
                 <Card
                   key={sheet.id}
                   className="bg-slate-900/80 backdrop-blur-sm border border-slate-800 hover:border-slate-700 cursor-pointer transition-colors"
@@ -168,8 +174,10 @@ export default function EmployeeDashboard() {
                         <p className="font-medium text-slate-200 truncate">
                           {sheet.cycle_name || "Goal Sheet"}
                         </p>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
-                          <span>{sheet.goals?.length || 0} goals</span>
+                        <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
+                          <span>{sheet.goal_count} goal{sheet.goal_count !== 1 ? "s" : ""}</span>
+                          <span>&middot;</span>
+                          <span>{sheet.total_weightage}% weightage</span>
                         </div>
                       </div>
                       <StatusBadge status={sheet.status} />

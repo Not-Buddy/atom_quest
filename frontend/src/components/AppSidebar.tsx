@@ -18,14 +18,10 @@ import {
   Target,
   ClipboardCheck,
   Users,
-  FileText,
   BarChart3,
-  Settings,
   LogOut,
   Shield,
-  Activity,
-  Building,
-  TrendingUp,
+  FileText,
 } from "lucide-react";
 
 interface NavItem {
@@ -36,24 +32,17 @@ interface NavItem {
 
 const employeeNav: NavItem[] = [
   { title: "Dashboard", href: "/employee", icon: LayoutDashboard },
-  { title: "My Goals", href: "/employee/goals", icon: Target },
-  { title: "Achievements", href: "/employee/achievements", icon: ClipboardCheck },
-  { title: "Reports", href: "/reports", icon: BarChart3 },
+  { title: "Achievements", href: "/employee", icon: ClipboardCheck },
 ];
 
 const managerNav: NavItem[] = [
   { title: "Dashboard", href: "/manager", icon: LayoutDashboard },
-  { title: "Team Review", href: "/manager", icon: Users },
-  { title: "Check-ins", href: "/manager", icon: ClipboardCheck },
   { title: "Reports", href: "/reports", icon: BarChart3 },
 ];
 
 const adminNav: NavItem[] = [
   { title: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { title: "Users", href: "/admin/users", icon: Users },
-  { title: "Cycles", href: "/admin/cycles", icon: Activity },
-  { title: "Departments", href: "/admin/departments", icon: Building },
-  { title: "Thrust Areas", href: "/admin/thrust", icon: TrendingUp },
   { title: "Audit Log", href: "/admin/audit", icon: Shield },
   { title: "Reports", href: "/reports", icon: BarChart3 },
 ];
@@ -96,11 +85,7 @@ export function AppSidebar() {
                   (item.href !== "/" && location.pathname.startsWith(item.href + "/"));
                 return (
                   <SidebarMenuItem key={item.href + item.title}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isActive}
-                      tooltip={item.title}
-                    >
+                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
                       <NavLink to={item.href} className="flex items-center gap-3">
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
@@ -117,7 +102,7 @@ export function AppSidebar() {
       <SidebarFooter className="border-t border-slate-800 p-4">
         {user && (
           <div className="mb-3 px-2">
-            <p className="text-xs text-slate-500">{user.name}</p>
+            <p className="text-xs text-slate-500">{user.full_name}</p>
             <p className="text-[10px] text-slate-600 capitalize">{user.role}</p>
           </div>
         )}

@@ -1,7 +1,7 @@
 use crate::{
     api::ApiError,
     db::{
-        goals, cycles,
+        goals, cycles, users,
         models::{
             Claims, CreateGoalRequest, GoalResponse, GoalSheetResponse, GoalSheetSummary,
             UpdateGoalRequest,
@@ -23,8 +23,13 @@ pub async fn create_goal_sheet(
         .await?
         .ok_or_else(|| ApiError::NotFound("No active goal cycle found".to_string()))?;
 
-    let sheet = goals::create_sheet(&state.db.pool, claims.user_id, cycle.id).await?;
+    // Check if sheet already exists for this user+cycle
+    if let Some(existing) = goals::find_sheet_by_user_cycle(&state.db.pool, claims.user_id, cycle.id).await? {
+        let detail = goals::get_sheet_detail(&state.db.pool, existing.id).await?;
+        return Ok(Json(detail));
+    }
 
+    let sheet = goals::create_sheet(&state.db.pool, claims.user_id, cycle.id).await?;
     let detail = goals::get_sheet_detail(&state.db.pool, sheet.id).await?;
 
     Ok(Json(detail))
@@ -70,8 +75,14 @@ pub async fn get_sheet_detail(
 ) -> Result<Json<GoalSheetResponse>, ApiError> {
     let detail = goals::get_sheet_detail(&state.db.pool, sheet_id).await?;
 
+    // Owner can view. Manager of the owner can also view.
     if detail.user_id != claims.user_id {
-        return Err(ApiError::NotFound("Sheet not found".to_string()));
+        let owner = users::find_by_id(&state.db.pool, detail.user_id)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("Sheet not found".to_string()))?;
+        if owner.manager_id != Some(claims.user_id) {
+            return Err(ApiError::NotFound("Sheet not found".to_string()));
+        }
     }
 
     Ok(Json(detail))
@@ -151,6 +162,15 @@ pub async fn add_goal_to_sheet(
         .map(parse_date_str)
         .transpose()
         .map_err(|e| ApiError::ValidationError(e))?;
+
+    if let Some(ref date) = target_date {
+        let today = chrono::Local::now().date_naive();
+        if *date < today {
+            return Err(ApiError::ValidationError(
+                "Target date cannot be in the past".to_string()
+            ));
+        }
+    }
 
     let goal = goals::add_goal(
         &state.db.pool,
@@ -232,6 +252,15 @@ pub async fn update_goal(
         .map(parse_date_str)
         .transpose()
         .map_err(|e| ApiError::ValidationError(e))?;
+
+    if let Some(ref date) = target_date {
+        let today = chrono::Local::now().date_naive();
+        if *date < today {
+            return Err(ApiError::ValidationError(
+                "Target date cannot be in the past".to_string()
+            ));
+        }
+    }
 
     let updated = goals::update_goal(
         &state.db.pool,

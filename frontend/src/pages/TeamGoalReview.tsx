@@ -2,17 +2,18 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchSheet, editGoal, approveGoalSheet, returnGoalSheet } from "@/lib/api";
-import { Goal } from "@/lib/types";
+import { getGoalSheet, approveSheet, returnSheet, managerEditGoal } from "@/lib/api";
+import type { GoalSheetResponse, GoalResponse, UomType, SheetStatus } from "@/lib/types";
+import { UOM_LABELS, UOM_COLORS } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { GoalCard } from "@/components/GoalCard";
 import { WeightageBar } from "@/components/WeightageBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -38,63 +39,66 @@ export default function TeamGoalReview() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const numericId = Number(sheetId);
+
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
   const [error, setError] = useState("");
-  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
+  const [editingGoalId, setEditingGoalId] = useState<number | null>(null);
   const [editTarget, setEditTarget] = useState("");
   const [editWeightage, setEditWeightage] = useState("");
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["sheet", sheetId],
-    queryFn: () => fetchSheet(token!, sheetId!),
-    enabled: !!token && !!sheetId,
+  const { data: sheet, isLoading } = useQuery<GoalSheetResponse>({
+    queryKey: ["sheet", numericId],
+    queryFn: () => getGoalSheet(token!, numericId),
+    enabled: !!token && !Number.isNaN(numericId),
   });
 
   const approveMutation = useMutation({
-    mutationFn: () => approveGoalSheet(token!, sheetId!),
+    mutationFn: () => approveSheet(token!, numericId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] });
-      queryClient.invalidateQueries({ queryKey: ["team-members"] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numericId] });
+      queryClient.invalidateQueries({ queryKey: ["team-sheets"] });
     },
     onError: (err: Error) => setError(err.message),
   });
 
   const returnMutation = useMutation({
-    mutationFn: () => returnGoalSheet(token!, sheetId!, returnReason),
+    mutationFn: () => returnSheet(token!, numericId, { reason: returnReason }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] });
-      queryClient.invalidateQueries({ queryKey: ["team-members"] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numericId] });
+      queryClient.invalidateQueries({ queryKey: ["team-sheets"] });
       setReturnDialogOpen(false);
+      setReturnReason("");
     },
     onError: (err: Error) => setError(err.message),
   });
 
   const updateGoalMutation = useMutation({
-    mutationFn: ({ goalId, data }: { goalId: string; data: Partial<Goal> }) =>
-      editGoal(token!, goalId, data),
+    mutationFn: ({ goalId, payload }: { goalId: number; payload: { target_value: number; weightage: number } }) =>
+      managerEditGoal(token!, numericId, goalId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numericId] });
       setEditingGoalId(null);
     },
     onError: (err: Error) => setError(err.message),
   });
 
-  const sheet = data?.sheet;
   const goals = sheet?.goals || [];
-  const totalWeightage = goals.reduce((sum, g) => sum + g.weightage, 0);
-  const isSubmitted = sheet?.status === "submitted";
+  const totalWeightage = sheet?.total_weightage ?? goals.reduce((sum, g) => sum + g.weightage, 0);
+  const canApprove = sheet?.status === "submitted" || sheet?.status === "returned";
+  const canReturn = sheet?.status === "submitted";
 
-  const startEditing = (goal: Goal) => {
+  const startEditing = (goal: GoalResponse) => {
     setEditingGoalId(goal.id);
     setEditTarget(String(goal.target_value));
     setEditWeightage(String(goal.weightage));
   };
 
-  const saveEditing = (goalId: string) => {
+  const saveEditing = (goalId: number) => {
     updateGoalMutation.mutate({
       goalId,
-      data: {
+      payload: {
         target_value: Number(editTarget),
         weightage: Number(editWeightage),
       },
@@ -117,7 +121,7 @@ export default function TeamGoalReview() {
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <AlertCircle className="h-8 w-8 text-red-400" />
           <p className="text-slate-400">Goal sheet not found</p>
-          <Button variant="outline" onClick={() => navigate("/manager")}>
+          <Button variant="outline" className="border-slate-700" onClick={() => navigate("/manager")}>
             <ArrowLeft className="mr-2 h-3.5 w-3.5" />
             Back
           </Button>
@@ -144,7 +148,7 @@ export default function TeamGoalReview() {
                 {sheet.user_name || "Employee"} &mdash; {sheet.cycle_name || "Goal Sheet"}
               </h1>
               <p className="text-sm text-slate-400 mt-1">
-                {sheet.user_department} &middot; {goals.length} goals
+                {goals.length} goals &middot; Status: {sheet.status}
               </p>
             </div>
             <StatusBadge status={sheet.status} className="px-3 py-1 text-sm" />
@@ -152,11 +156,11 @@ export default function TeamGoalReview() {
         </div>
 
         {/* Return reason display */}
-        {sheet.return_reason && (
+        {sheet.status === "returned" && sheet.returned_reason && (
           <Alert className="bg-amber-950/30 border-amber-800 text-amber-300">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              Return reason: {sheet.return_reason}
+              Return reason: {sheet.returned_reason}
             </AlertDescription>
           </Alert>
         )}
@@ -172,8 +176,8 @@ export default function TeamGoalReview() {
         <WeightageBar total={totalWeightage} />
 
         {/* Actions */}
-        {isSubmitted && (
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          {canApprove && (
             <Button
               className="bg-emerald-600 hover:bg-emerald-500 text-white"
               onClick={() => approveMutation.mutate()}
@@ -186,6 +190,8 @@ export default function TeamGoalReview() {
               )}
               Approve
             </Button>
+          )}
+          {canReturn && (
             <Button
               variant="outline"
               className="border-amber-700 text-amber-400 hover:bg-amber-950/30"
@@ -194,26 +200,24 @@ export default function TeamGoalReview() {
               <Undo2 className="mr-2 h-3.5 w-3.5" />
               Return with Reason
             </Button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Goals list with inline editing */}
+        {/* Goals list */}
         <div className="grid gap-3 sm:grid-cols-2">
-          {goals.map((goal) => (
+          {goals.map((goal: GoalResponse) => (
             <Card key={goal.id} className="bg-slate-900/80 backdrop-blur-sm border border-slate-800">
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
                   <CardTitle className="text-base text-slate-100">{goal.title}</CardTitle>
-                  {isSubmitted && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-slate-400 hover:text-indigo-400"
-                      onClick={() => startEditing(goal)}
-                    >
-                      <Edit className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-slate-400 hover:text-indigo-400"
+                    onClick={() => startEditing(goal)}
+                  >
+                    <Edit className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -235,7 +239,7 @@ export default function TeamGoalReview() {
                         value={editWeightage}
                         onChange={(e) => setEditWeightage(e.target.value)}
                         className="mt-1 bg-slate-800/50 border-slate-700 text-slate-100"
-                        min={10}
+                        min={0}
                         max={100}
                       />
                     </div>
@@ -261,17 +265,33 @@ export default function TeamGoalReview() {
                   </div>
                 ) : (
                   <>
+                    <div className="flex flex-wrap gap-1.5">
+                      {goal.uom_type && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] px-1.5 py-0 border ${UOM_COLORS[goal.uom_type]}`}
+                        >
+                          {UOM_LABELS[goal.uom_type] || goal.uom_type}
+                        </Badge>
+                      )}
+                      {goal.thrust_area_name && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 border bg-purple-500/10 text-purple-400 border-purple-500/30"
+                        >
+                          {goal.thrust_area_name}
+                        </Badge>
+                      )}
+                      {goal.is_shared && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 border bg-cyan-500/10 text-cyan-400 border-cyan-500/30"
+                        >
+                          Shared
+                        </Badge>
+                      )}
+                    </div>
                     <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span className="text-slate-500">UOM</span>
-                        <p className="font-medium text-slate-300">
-                          {goal.uom_type.replace("_", " ")}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Thrust</span>
-                        <p className="font-medium text-slate-300">{goal.thrust_area}</p>
-                      </div>
                       <div>
                         <span className="text-slate-500">Target</span>
                         <p className="font-semibold text-slate-200">{goal.target_value}</p>
@@ -318,7 +338,6 @@ export default function TeamGoalReview() {
                 Cancel
               </Button>
               <Button
-                variant="default"
                 className="bg-amber-600 hover:bg-amber-500"
                 onClick={() => {
                   if (!returnReason.trim()) {

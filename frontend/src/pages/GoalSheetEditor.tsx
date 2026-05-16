@@ -2,13 +2,29 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchSheet, createGoal, editGoal, removeGoal, submitSheetForApproval } from "@/lib/api";
-import { Goal, THRUST_AREAS, UomType, UOM_LABELS } from "@/lib/types";
+import {
+  getGoalSheet,
+  addGoal,
+  updateGoal,
+  deleteGoal,
+  submitSheet,
+  listThrustAreas,
+} from "@/lib/api";
+import type {
+  GoalSheetResponse,
+  GoalResponse,
+  ThrustArea,
+  UomType,
+  CreateGoalPayload,
+  UpdateGoalPayload,
+} from "@/lib/types";
+import { UOM_LABELS, UOM_COLORS } from "@/lib/types";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { StatusBadge } from "@/components/StatusBadge";
-import { GoalCard } from "@/components/GoalCard";
 import { WeightageBar } from "@/components/WeightageBar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -29,14 +45,26 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Plus, Loader2, AlertCircle, ArrowLeft, Send } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Plus,
+  Loader2,
+  AlertCircle,
+  ArrowLeft,
+  Send,
+  Edit,
+  Trash2,
+  Lock,
+  Share2,
+} from "lucide-react";
 
 const UOM_OPTIONS: { value: UomType; label: string }[] = [
-  { value: "min_numeric", label: "Minimize" },
-  { value: "max_numeric", label: "Maximize" },
-  { value: "timeline", label: "Timeline" },
-  { value: "zero", label: "Zero" },
-  { value: "percent", label: "Percent" },
+  { value: "min_numeric", label: UOM_LABELS.min_numeric },
+  { value: "max_numeric", label: UOM_LABELS.max_numeric },
+  { value: "min_percent", label: UOM_LABELS.min_percent },
+  { value: "max_percent", label: UOM_LABELS.max_percent },
+  { value: "timeline", label: UOM_LABELS.timeline },
+  { value: "zero", label: UOM_LABELS.zero },
 ];
 
 export default function GoalSheetEditor() {
@@ -45,8 +73,10 @@ export default function GoalSheetEditor() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const numSheetId = sheetId ? parseInt(sheetId) : 0;
+
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [editingGoal, setEditingGoal] = useState<GoalResponse | null>(null);
   const [error, setError] = useState("");
 
   // Goal form state
@@ -56,69 +86,85 @@ export default function GoalSheetEditor() {
   const [targetValue, setTargetValue] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [weightage, setWeightage] = useState(20);
-  const [thrustArea, setThrustArea] = useState(THRUST_AREAS[0]);
+  const [thrustAreaId, setThrustAreaId] = useState<number | null>(null);
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["sheet", sheetId],
-    queryFn: () => fetchSheet(token!, sheetId!),
-    enabled: !!token && !!sheetId,
+  const { data: sheet, isLoading, isError } = useQuery({
+    queryKey: ["sheet", numSheetId],
+    queryFn: () => getGoalSheet(token!, numSheetId),
+    enabled: !!token && !!numSheetId,
+  });
+
+  const { data: thrustAreas = [] } = useQuery({
+    queryKey: ["thrust-areas"],
+    queryFn: () => listThrustAreas(token!),
+    enabled: !!token,
   });
 
   const submitMutation = useMutation({
-    mutationFn: () => submitSheetForApproval(token!, sheetId!),
+    mutationFn: () => submitSheet(token!, numSheetId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numSheetId] });
       queryClient.invalidateQueries({ queryKey: ["my-sheets"] });
     },
     onError: (err: Error) => setError(err.message),
   });
 
   const createGoalMutation = useMutation({
-    mutationFn: (goal: Omit<Goal, "id" | "sheet_id" | "created_at" | "updated_at" | "order_index">) =>
-      createGoal(token!, sheetId!, goal),
+    mutationFn: (payload: CreateGoalPayload) =>
+      addGoal(token!, numSheetId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numSheetId] });
       closeDialog();
     },
     onError: (err: Error) => setError(err.message),
   });
 
   const updateGoalMutation = useMutation({
-    mutationFn: ({ goalId, data }: { goalId: string; data: Partial<Goal> }) =>
-      editGoal(token!, goalId, data),
+    mutationFn: ({
+      goalId,
+      payload,
+    }: {
+      goalId: number;
+      payload: UpdateGoalPayload;
+    }) => updateGoal(token!, goalId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] });
+      queryClient.invalidateQueries({ queryKey: ["sheet", numSheetId] });
       closeDialog();
     },
     onError: (err: Error) => setError(err.message),
   });
 
   const deleteGoalMutation = useMutation({
-    mutationFn: (goalId: string) => removeGoal(token!, goalId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sheet", sheetId] }),
+    mutationFn: (goalId: number) => deleteGoal(token!, goalId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["sheet", numSheetId] }),
   });
 
-  const sheet = data?.sheet;
-  const goals = sheet?.goals || [];
+  const goals: GoalResponse[] = sheet?.goals ?? [];
   const isDraft = sheet?.status === "draft";
+  const isReturned = sheet?.status === "returned";
   const totalWeightage = goals.reduce((sum, g) => sum + g.weightage, 0);
   const goalsCount = goals.length;
   const maxGoals = 8;
 
-  const openAddDialog = () => {
-    setEditingGoal(null);
+  const resetForm = () => {
     setTitle("");
     setDescription("");
     setUomType("max_numeric");
     setTargetValue("");
     setTargetDate("");
     setWeightage(20);
-    setThrustArea(THRUST_AREAS[0]);
+    setThrustAreaId(null);
     setError("");
+  };
+
+  const openAddDialog = () => {
+    setEditingGoal(null);
+    resetForm();
     setDialogOpen(true);
   };
 
-  const openEditDialog = (goal: Goal) => {
+  const openEditDialog = (goal: GoalResponse) => {
     setEditingGoal(goal);
     setTitle(goal.title);
     setDescription(goal.description || "");
@@ -126,7 +172,7 @@ export default function GoalSheetEditor() {
     setTargetValue(String(goal.target_value));
     setTargetDate(goal.target_date || "");
     setWeightage(goal.weightage);
-    setThrustArea(goal.thrust_area);
+    setThrustAreaId(goal.thrust_area_id);
     setError("");
     setDialogOpen(true);
   };
@@ -154,7 +200,9 @@ export default function GoalSheetEditor() {
       : totalWeightage + weightage;
 
     if (newWeightage > 100 && !editingGoal) {
-      setError(`Adding this goal would exceed 100% weightage (currently at ${totalWeightage}%)`);
+      setError(
+        `Adding this goal would exceed 100% weightage (currently at ${totalWeightage}%)`
+      );
       return;
     }
 
@@ -163,24 +211,27 @@ export default function GoalSheetEditor() {
       return;
     }
 
-    const goalData = {
+    const payload: CreateGoalPayload | UpdateGoalPayload = {
+      thrust_area_id: thrustAreaId,
       title: title.trim(),
-      description: description.trim() || undefined,
+      description: description.trim() || null,
       uom_type: uomType,
       target_value: Number(targetValue),
-      target_date: targetDate || undefined,
+      target_date: targetDate || null,
       weightage,
-      thrust_area: thrustArea,
     };
 
     if (editingGoal) {
-      updateGoalMutation.mutate({ goalId: editingGoal.id, data: goalData as any });
+      updateGoalMutation.mutate({
+        goalId: editingGoal.id,
+        payload: payload as UpdateGoalPayload,
+      });
     } else {
-      createGoalMutation.mutate(goalData as any);
+      createGoalMutation.mutate(payload as CreateGoalPayload);
     }
   };
 
-  const handleDeleteGoal = (goalId: string) => {
+  const handleDeleteGoal = (goalId: number) => {
     if (window.confirm("Delete this goal?")) {
       deleteGoalMutation.mutate(goalId);
     }
@@ -204,7 +255,11 @@ export default function GoalSheetEditor() {
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <AlertCircle className="h-8 w-8 text-red-400" />
           <p className="text-slate-400">Failed to load goal sheet</p>
-          <Button variant="outline" onClick={() => navigate("/employee")}>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/employee")}
+            className="border-slate-700 text-slate-300 hover:bg-slate-800"
+          >
             <ArrowLeft className="mr-2 h-3.5 w-3.5" />
             Back to Dashboard
           </Button>
@@ -234,21 +289,47 @@ export default function GoalSheetEditor() {
               {totalWeightage}% weightage
             </p>
           </div>
-          <StatusBadge status={sheet.status} className="px-3 py-1 text-sm" />
+          <div className="flex items-center gap-2">
+            {!isDraft && (
+              <Badge
+                variant="secondary"
+                className="bg-slate-800 text-slate-400 border-slate-700"
+              >
+                <Lock className="mr-1 h-3 w-3" />
+                Read-only
+              </Badge>
+            )}
+            <StatusBadge status={sheet.status} className="px-3 py-1 text-sm" />
+          </div>
         </div>
+
+        {/* Returned reason */}
+        {isReturned && sheet.returned_reason && (
+          <Alert className="bg-amber-950/30 border-amber-800 text-amber-300">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{sheet.returned_reason}</AlertDescription>
+          </Alert>
+        )}
 
         {/* Error alert */}
         {error && (
-          <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-400">
+          <Alert
+            variant="destructive"
+            className="bg-red-950/50 border-red-800 text-red-400"
+          >
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         {submitMutation.isError && (
-          <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-400">
+          <Alert
+            variant="destructive"
+            className="bg-red-950/50 border-red-800 text-red-400"
+          >
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              Failed to submit: {submitMutation.error?.message || "Please try again."}
+              Failed to submit:{" "}
+              {submitMutation.error?.message || "Please try again."}
             </AlertDescription>
           </Alert>
         )}
@@ -269,7 +350,6 @@ export default function GoalSheetEditor() {
             </Button>
             {totalWeightage === 100 && goalsCount > 0 && (
               <Button
-                variant="default"
                 className="bg-emerald-600 hover:bg-emerald-500"
                 onClick={() => submitMutation.mutate()}
                 disabled={submitMutation.isPending}
@@ -285,24 +365,104 @@ export default function GoalSheetEditor() {
           </div>
         )}
 
-        {isDraft && goalsCount === 0 && (
+        {goalsCount === 0 && (
           <div className="text-center py-12 border border-dashed border-slate-700 rounded-xl">
-            <p className="text-slate-500">No goals added yet. Click "Add Goal" to start.</p>
+            <p className="text-slate-500">
+              No goals added yet. Click "Add Goal" to start.
+            </p>
           </div>
         )}
 
         {/* Goals Grid */}
         {goalsCount > 0 && (
           <div className="grid gap-3 sm:grid-cols-2">
-            {goals.map((goal) => (
-              <GoalCard
-                key={goal.id}
-                goal={goal}
-                readOnly={!isDraft}
-                onEdit={isDraft ? openEditDialog : undefined}
-                onDelete={isDraft ? handleDeleteGoal : undefined}
-              />
-            ))}
+            {goals.map((goal) => {
+              const isShared = goal.is_shared && goal.shared_from_goal_id;
+              const uomBadgeColor =
+                UOM_COLORS[goal.uom_type] || "bg-slate-800 text-slate-400";
+
+              return (
+                <Card
+                  key={goal.id}
+                  className="bg-slate-900/80 backdrop-blur-sm border border-slate-800"
+                >
+                  <CardContent className="py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <p className="text-base font-semibold text-slate-100 truncate">
+                          {goal.title}
+                        </p>
+                        <Badge
+                          className={cn("shrink-0 text-xs border", uomBadgeColor)}
+                          variant="outline"
+                        >
+                          {UOM_LABELS[goal.uom_type]}
+                        </Badge>
+                        {isShared && (
+                          <Badge
+                            variant="secondary"
+                            className="shrink-0 text-xs bg-purple-500/20 text-purple-400 border-purple-500/30"
+                          >
+                            <Share2 className="mr-0.5 h-3 w-3" />
+                            Shared
+                          </Badge>
+                        )}
+                      </div>
+                      {isDraft && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-400 hover:text-indigo-400"
+                            onClick={() => openEditDialog(goal)}
+                          >
+                            <Edit className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-400 hover:text-red-400"
+                            onClick={() => handleDeleteGoal(goal.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    {goal.description && (
+                      <p className="text-sm text-slate-400">
+                        {goal.description}
+                      </p>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-slate-500">Target</span>
+                        <p className="font-semibold text-slate-200">
+                          {goal.target_value}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Weightage</span>
+                        <p className="font-semibold text-indigo-400">
+                          {goal.weightage}%
+                        </p>
+                      </div>
+                    </div>
+
+                    {goal.thrust_area_name && (
+                      <div className="text-sm">
+                        <span className="text-slate-500">Thrust Area</span>
+                        <p className="font-medium text-slate-300">
+                          {goal.thrust_area_name}
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
 
@@ -322,7 +482,10 @@ export default function GoalSheetEditor() {
 
             <div className="space-y-4">
               {error && (
-                <Alert variant="destructive" className="bg-red-950/50 border-red-800 text-red-400">
+                <Alert
+                  variant="destructive"
+                  className="bg-red-950/50 border-red-800 text-red-400"
+                >
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
@@ -334,7 +497,13 @@ export default function GoalSheetEditor() {
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g., Reduce defect rate"
-                  className="bg-slate-800/50 border-slate-700 text-slate-100 placeholder:text-slate-600"
+                  disabled={
+                    !!(
+                      editingGoal?.is_shared &&
+                      editingGoal?.shared_from_goal_id
+                    )
+                  }
+                  className="bg-slate-800/50 border-slate-700 text-slate-100 placeholder:text-slate-600 disabled:opacity-50"
                 />
               </div>
 
@@ -352,8 +521,17 @@ export default function GoalSheetEditor() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="text-slate-300">UOM Type</Label>
-                  <Select value={uomType} onValueChange={(v) => setUomType(v as UomType)}>
-                    <SelectTrigger className="bg-slate-800/50 border-slate-700 text-slate-100">
+                  <Select
+                    value={uomType}
+                    onValueChange={(v) => setUomType(v as UomType)}
+                    disabled={
+                      !!(
+                        editingGoal?.is_shared &&
+                        editingGoal?.shared_from_goal_id
+                      )
+                    }
+                  >
+                    <SelectTrigger className="bg-slate-800/50 border-slate-700 text-slate-100 disabled:opacity-50">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-900 border-slate-700 text-slate-100">
@@ -373,16 +551,25 @@ export default function GoalSheetEditor() {
                     value={targetValue}
                     onChange={(e) => setTargetValue(e.target.value)}
                     placeholder="e.g., 95"
-                    className="bg-slate-800/50 border-slate-700 text-slate-100 placeholder:text-slate-600"
+                    disabled={
+                      !!(
+                        editingGoal?.is_shared &&
+                        editingGoal?.shared_from_goal_id
+                      )
+                    }
+                    className="bg-slate-800/50 border-slate-700 text-slate-100 placeholder:text-slate-600 disabled:opacity-50"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label className="text-slate-300">Target Date (optional)</Label>
+                <Label className="text-slate-300">
+                  Target Date (optional)
+                </Label>
                 <Input
                   type="date"
                   value={targetDate}
+                  min={new Date().toISOString().split("T")[0]}
                   onChange={(e) => setTargetDate(e.target.value)}
                   className="bg-slate-800/50 border-slate-700 text-slate-100"
                 />
@@ -390,14 +577,20 @@ export default function GoalSheetEditor() {
 
               <div className="space-y-2">
                 <Label className="text-slate-300">Thrust Area</Label>
-                <Select value={thrustArea} onValueChange={setThrustArea}>
+                <Select
+                  value={thrustAreaId != null ? String(thrustAreaId) : "none"}
+                  onValueChange={(v) =>
+                    setThrustAreaId(v === "none" ? null : Number(v))
+                  }
+                >
                   <SelectTrigger className="bg-slate-800/50 border-slate-700 text-slate-100">
-                    <SelectValue />
+                    <SelectValue placeholder="Select a thrust area..." />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-900 border-slate-700 text-slate-100">
-                    {THRUST_AREAS.map((area) => (
-                      <SelectItem key={area} value={area}>
-                        {area}
+                    <SelectItem value="none">None</SelectItem>
+                    {thrustAreas.map((area: ThrustArea) => (
+                      <SelectItem key={area.id} value={String(area.id)}>
+                        {area.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -407,7 +600,9 @@ export default function GoalSheetEditor() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-slate-300">Weightage</Label>
-                  <span className="text-sm font-semibold text-indigo-400">{weightage}%</span>
+                  <span className="text-sm font-semibold text-indigo-400">
+                    {weightage}%
+                  </span>
                 </div>
                 <Slider
                   value={[weightage]}
@@ -415,11 +610,16 @@ export default function GoalSheetEditor() {
                   min={10}
                   max={100}
                   step={5}
-                  className="[&>[data-slot=slider-track]]:bg-slate-700 [&>[data-slot=slider-range]]:bg-indigo-500"
                 />
                 <p className="text-xs text-slate-500">
-                  Total allocated: {totalWeightage - (editingGoal?.weightage || 0)}% + {weightage}% ={" "}
-                  {totalWeightage - (editingGoal?.weightage || 0) + weightage}%
+                  Total allocated:{" "}
+                  {totalWeightage -
+                    (editingGoal?.weightage || 0)}
+                  % + {weightage}% ={" "}
+                  {totalWeightage -
+                    (editingGoal?.weightage || 0) +
+                    weightage}
+                  %
                 </p>
               </div>
             </div>
