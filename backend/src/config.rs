@@ -12,12 +12,14 @@ pub struct Config {
     pub smtp_password: String,
     pub from_email: String,
     pub base_url: String,
+    #[allow(dead_code)]
+    pub admin_seed_password: Option<String>,
 }
 
 impl Config {
-    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_env() -> Self {
         dotenvy::dotenv().ok();
-        
+
         let database_url = std::env::var("DATABASE_URL")
             .expect("DATABASE_URL must be set in .env file");
         let jwt_secret = std::env::var("JWT_SECRET")
@@ -40,8 +42,9 @@ impl Config {
             .expect("FROM_EMAIL must be set in .env file");
         let base_url = std::env::var("BASE_URL")
             .expect("BASE_URL must be set in .env file");
+        let admin_seed_password = std::env::var("ADMIN_SEED_PASSWORD").ok();
 
-        Ok(Config {
+        Config {
             database_url,
             jwt_secret,
             jwt_expiry,
@@ -51,6 +54,7 @@ impl Config {
             smtp_password,
             from_email,
             base_url,
-        })
+            admin_seed_password,
+        }
     }
 }

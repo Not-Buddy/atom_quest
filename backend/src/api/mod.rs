@@ -1,9 +1,10 @@
 pub mod auth;
 pub mod middleware;
-pub mod faculty_auth;
-pub mod faculty_reports;
-pub mod leaderboard;
-pub mod stats;
+pub mod goals;
+pub mod manager;
+pub mod achievements;
+pub mod admin;
+pub mod reports;
 
 use axum::{
     http::StatusCode,
@@ -27,16 +28,7 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::DatabaseError(e) => {
                 tracing::error!("Database error: {:?}", e);
-                // Check if it's a duplicate entry error (MySQL error 1062)
-                if let sqlx::Error::Database(db_err) = &e {
-                    if db_err.code().is_some_and(|code| code == "1062") {
-                        (StatusCode::BAD_REQUEST, "LeetCode username is already taken by another user".to_string())
-                    } else {
-                        (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
-                    }
-                } else {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
-                }
+                (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
             }
             ApiError::ValidationError(msg) => (StatusCode::UNPROCESSABLE_ENTITY, msg),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
@@ -44,8 +36,7 @@ impl IntoResponse for ApiError {
             ApiError::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             ApiError::TooManyRequests(msg) => (StatusCode::TOO_MANY_REQUESTS, msg),
         };
-
-        (status, Json(json!({ "error": message }))).into_response()
+        (status, Json(json!({"error": message}))).into_response()
     }
 }
 

@@ -1,14 +1,16 @@
 pub mod models;
-pub mod student;
+pub mod users;
+pub mod goals;
+pub mod achievements;
+pub mod cycles;
+pub mod audit;
 pub mod backup;
-pub mod import;
-pub mod faculty;
 
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
 use std::time::Duration;
 
-const MAX_CONNECTIONS : u32 =50;
-// Type alias for database pool
+const MAX_CONNECTIONS: u32 = 50;
+
 pub type DbPool = MySqlPool;
 
 #[derive(Clone)]
@@ -26,9 +28,4 @@ impl Database {
 
         Ok(Database { pool })
     }
-
 }
-
-// Re-export commonly used functions
-#[allow(unused_imports)]
-pub use student::{find_student_by_email, find_student_by_id, update_student_links, get_student_by_ra, get_all_students};
