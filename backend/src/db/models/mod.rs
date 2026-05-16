@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use validator::Validate;
@@ -75,7 +75,7 @@ pub struct Goal {
     pub description: Option<String>,
     pub uom_type: String,
     pub target_value: f64,
-    pub target_date: Option<NaiveDateTime>,
+    pub target_date: Option<NaiveDate>,
     pub weightage: f64,
     pub is_shared: Option<bool>,
     pub shared_from_goal_id: Option<i32>,
@@ -90,7 +90,7 @@ pub struct Achievement {
     pub goal_id: i32,
     pub quarter: String,
     pub actual_value: Option<f64>,
-    pub actual_date: Option<NaiveDateTime>,
+    pub actual_date: Option<NaiveDate>,
     pub status: String,
     pub computed_score: Option<f64>,
     pub updated_at: Option<NaiveDateTime>,

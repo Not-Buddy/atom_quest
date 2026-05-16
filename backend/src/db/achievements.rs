@@ -28,7 +28,7 @@ pub async fn upsert_achievement(
     goal_id: i32,
     quarter: &str,
     actual_value: Option<f64>,
-    actual_date: Option<chrono::NaiveDateTime>,
+    actual_date: Option<chrono::NaiveDate>,
     status: &str,
 ) -> Result<Achievement, sqlx::Error> {
     let goal = sqlx::query_as::<_, super::models::Goal>(

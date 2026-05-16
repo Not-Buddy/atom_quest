@@ -2,7 +2,7 @@ use super::models::{
     AchievementReportEntry, CheckinCommentResponse, CompletionDashboardEntry, Goal, GoalResponse,
     GoalSheet, GoalSheetResponse,
 };
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 use sqlx::MySqlPool;
 
 pub async fn create_sheet(
@@ -189,7 +189,7 @@ pub async fn add_goal(
     description: Option<&str>,
     uom_type: &str,
     target_value: f64,
-    target_date: Option<chrono::NaiveDateTime>,
+    target_date: Option<chrono::NaiveDate>,
     weightage: f64,
     is_shared: Option<bool>,
     shared_from_goal_id: Option<i32>,
@@ -287,7 +287,7 @@ pub async fn update_goal(
     description: Option<Option<&str>>,
     uom_type: Option<&str>,
     target_value: Option<f64>,
-    target_date: Option<Option<chrono::NaiveDateTime>>,
+    target_date: Option<Option<chrono::NaiveDate>>,
     weightage: Option<f64>,
     is_shared: Option<Option<bool>>,
     sort_order: Option<Option<i32>>,
@@ -795,11 +795,11 @@ pub async fn get_completion_dashboard(
         SELECT
             d.short_name AS department,
             COUNT(gs.id) AS total_sheets,
-            SUM(CASE WHEN gs.status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
-            SUM(CASE WHEN gs.status = 'submitted' THEN 1 ELSE 0 END) AS submitted_count,
-            SUM(CASE WHEN gs.status = 'approved' THEN 1 ELSE 0 END) AS approved_count,
-            SUM(CASE WHEN gs.status = 'returned' THEN 1 ELSE 0 END) AS returned_count,
-            SUM(CASE WHEN gs.status = 'locked' THEN 1 ELSE 0 END) AS locked_count
+            CAST(SUM(CASE WHEN gs.status = 'draft' THEN 1 ELSE 0 END) AS SIGNED) AS draft_count,
+            CAST(SUM(CASE WHEN gs.status = 'submitted' THEN 1 ELSE 0 END) AS SIGNED) AS submitted_count,
+            CAST(SUM(CASE WHEN gs.status = 'approved' THEN 1 ELSE 0 END) AS SIGNED) AS approved_count,
+            CAST(SUM(CASE WHEN gs.status = 'returned' THEN 1 ELSE 0 END) AS SIGNED) AS returned_count,
+            CAST(SUM(CASE WHEN gs.status = 'locked' THEN 1 ELSE 0 END) AS SIGNED) AS locked_count
         FROM goal_sheets gs
         JOIN users u ON u.id = gs.user_id
         LEFT JOIN departments d ON d.id = u.department_id

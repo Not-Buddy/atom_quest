@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use axum::{extract::Path, Extension, Json, extract::State};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDate;
 use std::sync::Arc;
 use validator::Validate;
 
@@ -298,11 +298,7 @@ pub async fn delete_goal(
     Ok(Json("Goal deleted"))
 }
 
-fn parse_date_str(s: &str) -> Result<NaiveDateTime, String> {
-    NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-        .or_else(|_| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-        })
+fn parse_date_str(s: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|e| format!("Invalid date format: {}", e))
 }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { login as apiLogin, fetchMe } from "@/lib/api";
+import { login as apiLogin } from "@/lib/api";
 import type { User } from "@/lib/types";
 
 interface AuthContextType {
@@ -28,13 +28,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (storedToken && storedUser) {
       try {
         const parsedUser = JSON.parse(storedUser) as User;
-        // Validate stored user has a valid role from the new system
         const validRoles = ["employee", "manager", "admin"];
         if (parsedUser && validRoles.includes(parsedUser.role)) {
           setToken(storedToken);
           setUser(parsedUser);
         } else {
-          // Stale data from old app version or invalid format — clear it
           localStorage.removeItem("auth_token");
           localStorage.removeItem("auth_user");
         }
@@ -43,7 +41,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("auth_user");
       }
     } else {
-      // No stored data — clear any partial/invalid keys
       localStorage.removeItem("auth_token");
       localStorage.removeItem("auth_user");
     }
@@ -52,11 +49,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const data = await apiLogin({ email, password });
-
     if (!data.token) {
       throw new Error("Login failed: token missing in response");
     }
-
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem("auth_token", data.token);

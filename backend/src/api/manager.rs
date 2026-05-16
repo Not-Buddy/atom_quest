@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use axum::{extract::Path, Extension, Json, extract::State};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDate;
 use std::sync::Arc;
 use validator::Validate;
 
@@ -193,13 +193,7 @@ pub async fn push_shared_goal(
     let target_date = req
         .target_date
         .as_deref()
-        .map(|s| {
-            NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .or_else(|_| {
-                    NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                        .map(|d| d.and_hms_opt(0, 0, 0).unwrap())
-                })
-        })
+        .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
         .transpose()
         .map_err(|e| ApiError::ValidationError(format!("Invalid date format: {}", e)))?;
 
