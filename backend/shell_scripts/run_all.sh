@@ -32,7 +32,9 @@ failed_list=()
 
 echo "══════════════════════════════════════════════════════════"
 echo "  AtomQuest Backend Test Suite"
+#BASE_URL="${BASE_URL:-https://alpha.innosolve.in/atomquest}"
 echo "  Server: ${BASE_URL:-http://localhost:10000}"
+
 echo "══════════════════════════════════════════════════════════"
 echo ""
 

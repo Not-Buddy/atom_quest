@@ -7,7 +7,9 @@
 set +e +u
 
 CURL_OPTS="-s --max-time 30"
+#BASE_URL="${BASE_URL:-https://alpha.innosolve.in/atomquest}"
 BASE_URL="${BASE_URL:-http://localhost:10000}"
+
 PASS="password123"
 
 CALL_TMP=$(mktemp -t atomquest-test.XXXXXX)
